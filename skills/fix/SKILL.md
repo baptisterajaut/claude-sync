@@ -11,34 +11,45 @@ allowed-tools: Bash, Read, Edit, Write
 
 You are resolving sync conflicts detected by claude-sync. Follow these steps.
 
+**IMPORTANT — Minimize SSH:** Never run individual `ssh cat` commands per file. Fetch all remote files in ONE rsync call.
+
 ## Step 1: Get conflict list
 
-Run: `claude-sync status`
+Run `claude-sync status` to see per-file status. Identify which files are `CONFLICT`.
 
-Identify all files marked as `CONFLICT`.
+## Step 2: Fetch remote files locally
 
-## Step 2: Create backup
+Fetch all remote files in ONE rsync call so you can read them without further SSH:
+
+Read `~/.config/claude-sync/config` to get `REMOTE_HOST` and `REMOTE_PATH` values, then:
+
+```bash
+tmpdir=$(mktemp -d)
+rsync -a "<REMOTE_HOST>:<REMOTE_PATH>/" "$tmpdir/"
+```
+
+Now all three versions are local:
+- **Local:** `~/.claude/<file>`
+- **Remote:** `$tmpdir/<file>`
+- **Base:** `~/.config/claude-sync/last-sync/<file>` (may not exist for first-sync conflicts)
+
+## Step 3: Create backup
 
 ```bash
 backup_dir=~/.config/claude-sync/backups/$(date -Iseconds)
 mkdir -p "$backup_dir"
 ```
 
-For each conflicting file, back up both versions:
+For each conflicting file:
 ```bash
 cp ~/.claude/<file> "$backup_dir/<file>.local"
-ssh <REMOTE_HOST> "cat <REMOTE_PATH>/<file>" > "$backup_dir/<file>.remote"
+cp "$tmpdir/<file>" "$backup_dir/<file>.remote"
 cp ~/.config/claude-sync/last-sync/<file> "$backup_dir/<file>.base" 2>/dev/null || true
 ```
 
-Read the REMOTE_HOST and REMOTE_PATH from `~/.config/claude-sync/config`.
+## Step 4: For each conflicting file
 
-## Step 3: For each conflicting file
-
-1. Read all available versions:
-   - Local: `~/.claude/<file>`
-   - Remote: via SSH `cat` on the remote
-   - Base (if exists): `~/.config/claude-sync/last-sync/<file>`
+1. Read versions locally using the Read tool (already fetched, no SSH, no stdout truncation).
 
 2. Analyze the differences semantically:
    - For `.md` files: identify added/removed/modified sections
@@ -52,13 +63,32 @@ Read the REMOTE_HOST and REMOTE_PATH from `~/.config/claude-sync/config`.
 
 4. Ask the user to approve the merge. If they want changes, iterate.
 
-5. Once approved, write the resolved version:
-   - Write to local: `~/.claude/<file>`
-   - Copy to remote: use rsync or ssh+cat
-   - Update base: `cp ~/.claude/<file> ~/.config/claude-sync/last-sync/<file>`
+5. Once approved, write the resolved version locally:
+   ```bash
+   # Write to local
+   cat > ~/.claude/<file> <<'EOF'
+   <merged content>
+   EOF
+   # Update base
+   mkdir -p ~/.config/claude-sync/last-sync/$(dirname <file>)
+   cp ~/.claude/<file> ~/.config/claude-sync/last-sync/<file>
+   ```
 
-## Step 4: Verify
+## Step 5: Push resolved files and verify
 
-Run `claude-sync sync` to confirm all conflicts are resolved and everything is clean.
+After ALL conflicts are resolved locally, push everything to remote in ONE rsync call:
+
+```bash
+# Push all resolved files at once
+claude-sync sync
+```
+
+If sync reports clean — done. If new conflicts appear (shouldn't happen), repeat from step 1.
+
+## Step 6: Cleanup
+
+```bash
+rm -rf "$tmpdir"
+```
 
 Print: "All conflicts resolved. Config is in sync."

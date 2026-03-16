@@ -92,26 +92,34 @@ If no machine-specific content is found, skip this step.
 
 Run: `claude-sync sync`
 
-- If it succeeds with no conflicts → move to step 7
-- If it fails with conflicts → for each conflicting file:
-  1. Read the local version: `cat ~/.claude/<file>`
-  2. Read the remote version: `ssh <REMOTE_HOST> "cat <REMOTE_PATH>/<file>"`
+- If it succeeds with no conflicts → move to step 6
+- If it fails with conflicts → resolve them:
+  1. Fetch all remote files locally in one rsync call:
+     Read `~/.config/claude-sync/config` to get `REMOTE_HOST` and `REMOTE_PATH`, then:
+     ```bash
+     tmpdir=$(mktemp -d)
+     rsync -a "<REMOTE_HOST>:<REMOTE_PATH>/" "$tmpdir/"
+     ```
+  2. For each conflicting file, read versions **locally** with the Read tool (no SSH, no stdout truncation):
+     - Local: `~/.claude/<file>`
+     - Remote: `$tmpdir/<file>`
+     - Base: `~/.config/claude-sync/last-sync/<file>` (won't exist on first sync)
   3. Show the user both versions with a semantic explanation of the differences
-  4. Propose a merged version that combines both (e.g. for CLAUDE.md, merge unique sections; for settings.json, merge JSON keys)
+  4. Propose a merged version (for CLAUDE.md, merge unique sections; for settings.json, merge JSON keys)
   5. Ask the user to approve the merge
   6. Once approved, write the resolved version:
      ```bash
-     # Write locally
      cat > ~/.claude/<file> <<'EOF'
      <merged content>
      EOF
-     # Copy to remote
-     rsync -a ~/.claude/<file> <REMOTE_HOST>:<REMOTE_PATH>/<file>
-     # Update base snapshot
      mkdir -p ~/.config/claude-sync/last-sync/$(dirname <file>)
      cp ~/.claude/<file> ~/.config/claude-sync/last-sync/<file>
      ```
-  7. After resolving ALL conflicts, run `claude-sync sync` again to confirm clean state
+  7. After resolving ALL conflicts, clean up and re-sync:
+     ```bash
+     rm -rf "$tmpdir"
+     claude-sync sync
+     ```
 
 ## Step 6: Install missing plugins
 
