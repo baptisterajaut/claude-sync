@@ -4,6 +4,7 @@ description: >
   Resolve claude-sync conflicts — shows semantic diffs of conflicting files
   and guides interactive merge resolution.
   TRIGGER when: claude-sync reports conflicts, or user asks to fix sync conflicts.
+allowed-tools: Bash, Read, Edit, Write
 ---
 
 # /claude-sync:fix — Conflict Resolution

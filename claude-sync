@@ -697,8 +697,7 @@ cmd_launch_skill() {
         exit 1
     fi
 
-    exec claude --plugin-dir "$repo_dir" \
-        --append-system-prompt "The user wants to run /claude-sync:$skill_name. Invoke it immediately using the Skill tool."
+    exec claude --plugin-dir "$repo_dir" "/claude-sync:$skill_name"
 }
 
 # Allow sourcing for tests
