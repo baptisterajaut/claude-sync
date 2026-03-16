@@ -651,6 +651,8 @@ cmd_sync() {
 
     # Phase 8: Merge plugins.list (handled separately — additive merge, not three-way)
     generate_plugins_list
+    local pre_merge_plugins=""
+    [[ -f "$CLAUDE_DIR/plugins.list" ]] && pre_merge_plugins=$(cat "$CLAUDE_DIR/plugins.list")
     local remote_plugins_file
     if [[ -z "${REMOTE_HOST:-}" ]]; then
         remote_plugins_file="$REMOTE_PATH/plugins.list"
@@ -681,7 +683,13 @@ cmd_sync() {
                     fi
                     mkdir -p "$LAST_SYNC_DIR"
                     cp "$CLAUDE_DIR/plugins.list" "$LAST_SYNC_DIR/plugins.list"
-                    echo "plugins.list: merged (union of both sides)"
+                    echo "plugins.list: merged"
+                    # Show what's new
+                    local new_plugins
+                    new_plugins=$(comm -13 <(echo "$pre_merge_plugins" | sort) <(sort "$CLAUDE_DIR/plugins.list"))
+                    if [[ -n "$new_plugins" ]]; then
+                        echo "$new_plugins" | sed 's/^/  new: /'
+                    fi
                     plugins_changed=true
                 else
                     echo "[dry-run] plugins.list: would merge"
