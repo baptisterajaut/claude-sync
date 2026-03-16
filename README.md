@@ -53,6 +53,7 @@ ssh user@your-server.com "echo ok"  # verify it works without password
 REMOTE_HOST="user@your-server.com"
 REMOTE_PATH="/home/user/claude-sync-backup"  # absolute path, resolved at init
 CLAUDE_DIR="$HOME/.claude"
+SSH_PORT="22"  # optional, defaults to 22
 ```
 
 ## What gets synced

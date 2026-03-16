@@ -51,6 +51,11 @@ load_config() {
     # Expand ~ in local paths (tilde isn't expanded when quoted in config files)
     CLAUDE_DIR="${CLAUDE_DIR/#\~/$HOME}"
     # REMOTE_PATH should always be absolute (resolved by /claude-sync:init)
+
+    # SSH port (optional, defaults to 22)
+    SSH_PORT="${SSH_PORT:-22}"
+    SSH_CMD="ssh -p $SSH_PORT"
+    RSYNC_SSH="ssh -p $SSH_PORT"
 }
 
 load_synclist() {
@@ -101,7 +106,7 @@ release_remote_lock() {
     if [[ -z "${REMOTE_HOST:-}" ]]; then
         rm -f "$REMOTE_PATH/.claude-sync.lock"
     else
-        ssh "$REMOTE_HOST" "rm -f \"$REMOTE_PATH/.claude-sync.lock\""
+        $SSH_CMD "$REMOTE_HOST" "rm -f \"$REMOTE_PATH/.claude-sync.lock\""
     fi
 }
 
@@ -167,7 +172,7 @@ fetch_remote_checksums_readonly() {
     if [[ -z "${REMOTE_HOST:-}" ]]; then
         REMOTE_CHECKSUMS_CACHE=$(cd "$REMOTE_PATH" 2>/dev/null && find . -type f -not -name ".claude-sync.lock" -exec md5sum {} + 2>/dev/null | sed 's| \./| |' || true)
     else
-        REMOTE_CHECKSUMS_CACHE=$(ssh "$REMOTE_HOST" "cd \"$REMOTE_PATH\" 2>/dev/null && find . -type f -not -name \".claude-sync.lock\" -exec md5sum {} + 2>/dev/null | sed 's| \./| |'" || true)
+        REMOTE_CHECKSUMS_CACHE=$($SSH_CMD "$REMOTE_HOST" "cd \"$REMOTE_PATH\" 2>/dev/null && find . -type f -not -name \".claude-sync.lock\" -exec md5sum {} + 2>/dev/null | sed 's| \./| |'" || true)
     fi
 }
 
@@ -250,7 +255,7 @@ build_file_union() {
         if [[ -z "${REMOTE_HOST:-}" ]]; then
             enumerate_files "$REMOTE_PATH" "$synclist"
         else
-            ssh "$REMOTE_HOST" "cd \"$REMOTE_PATH\" 2>/dev/null && find . -type f 2>/dev/null | sed 's|^\./||'" | while IFS= read -r f; do
+            $SSH_CMD "$REMOTE_HOST" "cd \"$REMOTE_PATH\" 2>/dev/null && find . -type f 2>/dev/null | sed 's|^\./||'" | while IFS= read -r f; do
                 if ! is_excluded "$f"; then
                     while IFS= read -r entry; do
                         [[ -z "$entry" ]] && continue
@@ -307,7 +312,7 @@ cmd_status() {
         if [[ -z "${REMOTE_HOST:-}" ]]; then
             [[ -f "$REMOTE_PATH/plugins.list" ]] && remote_plugins=$(sort -u "$REMOTE_PATH/plugins.list")
         else
-            remote_plugins=$(ssh "$REMOTE_HOST" "sort -u \"$REMOTE_PATH/plugins.list\" 2>/dev/null" || true)
+            remote_plugins=$($SSH_CMD "$REMOTE_HOST" "sort -u \"$REMOTE_PATH/plugins.list\" 2>/dev/null" || true)
         fi
     fi
 
@@ -352,7 +357,7 @@ batch_push() {
             cp "$CLAUDE_DIR/$f" "$REMOTE_PATH/$f"
         done < "$files_from"
     else
-        rsync -a --files-from="$files_from" "$CLAUDE_DIR/" "$REMOTE_HOST:$REMOTE_PATH/"
+        rsync -a -e "$RSYNC_SSH" --files-from="$files_from" "$CLAUDE_DIR/" "$REMOTE_HOST:$REMOTE_PATH/"
     fi
 }
 
@@ -365,7 +370,7 @@ batch_pull() {
             cp "$REMOTE_PATH/$f" "$CLAUDE_DIR/$f"
         done < "$files_from"
     else
-        rsync -a --files-from="$files_from" "$REMOTE_HOST:$REMOTE_PATH/" "$CLAUDE_DIR/"
+        rsync -a -e "$RSYNC_SSH" --files-from="$files_from" "$REMOTE_HOST:$REMOTE_PATH/" "$CLAUDE_DIR/"
     fi
 }
 
@@ -481,7 +486,7 @@ remote_init() {
         mkdir -p "$REMOTE_PATH"
         ( cd "$REMOTE_PATH" && find . -type f -not -name ".claude-sync.lock" -exec md5sum {} + 2>/dev/null | sed 's| \./| |' ) || true
     else
-        ssh "$REMOTE_HOST" '
+        $SSH_CMD "$REMOTE_HOST" '
             set -e
             set -C
             echo "'"'$HOSTNAME'"'" > "'"$REMOTE_PATH"'/.claude-sync.lock" 2>/dev/null || {
@@ -529,7 +534,7 @@ remote_finalize() {
             script+="rm -f \"$f\"; "
         done <<< "$delete_files"
         script+='rm -f .claude-sync.lock'
-        ssh "$REMOTE_HOST" "$script"
+        $SSH_CMD "$REMOTE_HOST" "$script"
     fi
 }
 
@@ -673,7 +678,7 @@ cmd_sync() {
         # Already fetched by remote_init, but plugins.list wasn't in the checksum
         # Fetch it now — single small file
         remote_plugins_file="$tmpdir/remote_plugins.list"
-        if ! rsync -a "$REMOTE_HOST:$REMOTE_PATH/plugins.list" "$remote_plugins_file" 2>/dev/null; then
+        if ! rsync -a -e "$RSYNC_SSH" "$REMOTE_HOST:$REMOTE_PATH/plugins.list" "$remote_plugins_file" 2>/dev/null; then
             remote_plugins_file=""  # doesn't exist on remote yet
         fi
     fi
@@ -692,7 +697,7 @@ cmd_sync() {
                     if [[ -z "${REMOTE_HOST:-}" ]]; then
                         cp "$CLAUDE_DIR/plugins.list" "$REMOTE_PATH/plugins.list"
                     else
-                        rsync -a "$CLAUDE_DIR/plugins.list" "$REMOTE_HOST:$REMOTE_PATH/plugins.list"
+                        rsync -a -e "$RSYNC_SSH" "$CLAUDE_DIR/plugins.list" "$REMOTE_HOST:$REMOTE_PATH/plugins.list"
                     fi
                     mkdir -p "$LAST_SYNC_DIR"
                     cp "$CLAUDE_DIR/plugins.list" "$LAST_SYNC_DIR/plugins.list"
@@ -719,7 +724,7 @@ cmd_sync() {
             if [[ -z "${REMOTE_HOST:-}" ]]; then
                 cp "$CLAUDE_DIR/plugins.list" "$REMOTE_PATH/plugins.list"
             else
-                rsync -a "$CLAUDE_DIR/plugins.list" "$REMOTE_HOST:$REMOTE_PATH/plugins.list"
+                rsync -a -e "$RSYNC_SSH" "$CLAUDE_DIR/plugins.list" "$REMOTE_HOST:$REMOTE_PATH/plugins.list"
             fi
             mkdir -p "$LAST_SYNC_DIR"
             cp "$CLAUDE_DIR/plugins.list" "$LAST_SYNC_DIR/plugins.list"
@@ -804,7 +809,7 @@ cmd_diff() {
             fi
         done < "$fetch_list"
     else
-        rsync -a --files-from="$fetch_list" "$REMOTE_HOST:$REMOTE_PATH/" "$tmpdir/remote/" 2>/dev/null || true
+        rsync -a -e "$RSYNC_SSH" --files-from="$fetch_list" "$REMOTE_HOST:$REMOTE_PATH/" "$tmpdir/remote/" 2>/dev/null || true
     fi
 
     while IFS= read -r filepath; do
