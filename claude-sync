@@ -89,6 +89,43 @@ release_remote_lock() {
     fi
 }
 
+# --- File enumeration ---
+
+enumerate_files() {
+    local root_dir="$1"
+    local synclist="$2"
+
+    while IFS= read -r entry; do
+        [[ -z "$entry" ]] && continue
+        local full_path="$root_dir/$entry"
+        if [[ "$entry" == */ ]]; then
+            if [[ -d "$full_path" ]]; then
+                (cd "$root_dir" && find "$entry" -type f 2>/dev/null) | while IFS= read -r f; do
+                    if ! is_excluded "$f"; then
+                        echo "$f"
+                    fi
+                done
+            fi
+        else
+            if [[ -f "$full_path" ]] && ! is_excluded "$entry"; then
+                echo "$entry"
+            fi
+        fi
+    done <<< "$synclist"
+}
+
+is_excluded() {
+    local path="$1"
+    local pattern
+    while IFS= read -r pattern; do
+        [[ -z "$pattern" ]] && continue
+        if [[ "$path" == "$pattern"* ]]; then
+            return 0
+        fi
+    done <<< "$EXCLUDE_PATTERNS"
+    return 1
+}
+
 # Allow sourcing for tests
 if [[ "${1:-}" == "--source-only" ]]; then
     return 0 2>/dev/null || exit 0
