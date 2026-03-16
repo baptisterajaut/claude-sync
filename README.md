@@ -7,7 +7,7 @@ Sync your Claude Code configuration across machines using rsync over SSH.
 - **Three-way sync** — detects who changed what using a `last-sync` snapshot
 - **Never overwrites** — conflicts are detected, not silently resolved
 - **Claude-assisted resolution** — `/claude-sync:fix` skill merges conflicts interactively
-- **Plugin sync** — `plugins.list` auto-merges across machines (union of all plugins)
+- **Plugin sync** — `plugins.list` auto-merges across machines (installs and removals propagated)
 - **Minimal dependencies** — bash, rsync, ssh
 
 ## Quick start
@@ -58,13 +58,9 @@ SSH_PORT="22"  # optional, defaults to 22
 
 ## What gets synced
 
-| Path | Method |
-|------|--------|
-| `CLAUDE.md` | Three-way sync |
-| `settings.json` | Three-way sync |
-| `skills/` | Three-way sync (excludes `skills/claude-sync/`) |
-| `agents/` | Three-way sync |
-| `plugins.list` | Additive merge (union of all machines' plugins) |
+`CLAUDE.md`, `settings.json`, `skills/`, `agents/` — via three-way sync (conflict detection).
+
+`plugins.list` — auto-generated from installed plugins, auto-merged (additions and removals propagated, never conflicts).
 
 **Never synced:** `CLAUDE.local.md`, `settings.local.json`, credentials, history, sessions, plugin cache.
 
@@ -92,8 +88,8 @@ No `push` or `pull` commands. No way to accidentally overwrite.
 
 | Project | Approach | Limitation |
 |---------|----------|------------|
-| [brianlovin/agent-config](https://github.com/brianlovin/agent-config) | Git + symlinks | Manual push/pull, symlinks fragile with rsync, no conflict detection |
-| [miwidot/ccms](https://github.com/miwidot/ccms) | rsync + SSH | Push/pull overwrites destination, no three-way, no conflict safety |
-| [claude-code-config-sync](https://www.npmjs.com/package/claude-code-config-sync) | MCP server + git | Heavy (Node.js), git-based, no three-way snapshot |
+| [brianlovin/agent-config](https://github.com/brianlovin/agent-config) | Git + symlinks | Manual push/pull, no conflict detection, no plugin sync |
+| [miwidot/ccms](https://github.com/miwidot/ccms) | rsync + SSH | Push/pull overwrites destination, no three-way, no plugin sync |
+| [claude-code-config-sync](https://www.npmjs.com/package/claude-code-config-sync) | MCP server + git | Heavy (Node.js), git-based, no three-way snapshot, no plugin sync |
 
-claude-sync uses a **three-way snapshot** (`last-sync/`) to detect who changed what — so it never blindly overwrites. Conflicts are resolved interactively through Claude, not silently lost.
+claude-sync uses a **three-way snapshot** (`last-sync/`) to detect who changed what — so it never blindly overwrites. Conflicts are resolved interactively through Claude, not silently lost. Plugin lists are auto-merged across machines without conflicts.

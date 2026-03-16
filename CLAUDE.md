@@ -15,7 +15,7 @@ Bash script + Claude Code plugin to sync `~/.claude/` config across machines via
 - **No push/pull** — only `sync` (bidirectional, safe) and `resolve` (explicit conflict resolution)
 - **Never overwrites on conflict** — both sides untouched until resolved via Claude
 - **`resolve <files...>`** — the only way to force local → remote, must specify files, only works on files actually in conflict
-- **`plugins.list`** — auto-generated from `installed_plugins.json`, merged as union (additive), not in the three-way synclist. Conflict only if remote removed a plugin
+- **`plugins.list`** — auto-generated from `installed_plugins.json`, auto-merged via three-way (additions + removals propagated, never conflicts). Not in the three-way synclist
 - **Skills use `claude-sync diff > /tmp` + Edit tool** — no manual rsync/mktemp/ssh in skills
 - **Local-only test mode** — `REMOTE_HOST=""` makes all operations use local dirs (no SSH), used by all bats tests
 
@@ -34,7 +34,7 @@ Bash script + Claude Code plugin to sync `~/.claude/` config across machines via
 ## Testing
 
 ```bash
-bats test/           # run all tests (65)
+bats test/           # run all tests (72)
 bats test/test_sync.bats  # sync + resolve tests
 ```
 
