@@ -616,6 +616,39 @@ cmd_diff() {
     done <<< "$changed_files"
 }
 
+# --- Update command ---
+
+cmd_update() {
+    : "${REPO_DIR:?REPO_DIR not set in $CONFIG_FILE}"
+
+    if [[ ! -d "$REPO_DIR/.git" ]]; then
+        echo "error: $REPO_DIR is not a git repo" >&2
+        exit 1
+    fi
+
+    echo "Pulling latest from $(git -C "$REPO_DIR" remote get-url origin)..."
+    git -C "$REPO_DIR" pull
+
+    local script_path
+    script_path=$(command -v claude-sync || echo "")
+    if [[ -n "$script_path" ]]; then
+        cp "$REPO_DIR/claude-sync" "$script_path"
+        chmod +x "$script_path"
+        echo "Updated script: $script_path"
+    else
+        echo "warning: claude-sync not found in PATH, skipping script copy" >&2
+    fi
+
+    local skills_dest="$CLAUDE_DIR/skills/claude-sync"
+    if [[ -d "$REPO_DIR/skills/claude-sync" ]]; then
+        rm -rf "$skills_dest"
+        cp -r "$REPO_DIR/skills/claude-sync" "$skills_dest"
+        echo "Updated skills: $skills_dest"
+    fi
+
+    echo "Update complete (v$(bash "$REPO_DIR/claude-sync" --version | awk '{print $2}'))."
+}
+
 # Allow sourcing for tests
 if [[ "${1:-}" == "--source-only" ]]; then
     return 0 2>/dev/null || exit 0
