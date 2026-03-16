@@ -651,19 +651,11 @@ cmd_install() {
     local repo_dir
     repo_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-    # 1. Install plugin (skills become /claude-sync:init, /claude-sync:fix, etc.)
-    if [[ ! -d "$repo_dir/.claude-plugin" ]]; then
-        echo "error: .claude-plugin/ not found in $repo_dir" >&2
-        exit 1
-    fi
-    if command -v claude >/dev/null 2>&1; then
-        claude plugin install --plugin-dir "$repo_dir" --scope user 2>/dev/null && \
-            echo "Installed claude-sync plugin" || \
-            echo "warning: plugin install failed, skills may not be available" >&2
-    else
-        echo "warning: claude CLI not found, skipping plugin install" >&2
-        echo "Run 'claude plugin install --plugin-dir $repo_dir --scope user' manually." >&2
-    fi
+    # 1. Plugin info
+    echo "Plugin directory: $repo_dir"
+    echo ""
+    echo "To use skills (/claude-sync:init, etc.), launch Claude with:"
+    echo "  claude --plugin-dir $repo_dir"
 
     # 2. Symlink script into PATH
     local target_dir="$HOME/.local/bin"
