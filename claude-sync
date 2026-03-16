@@ -11,8 +11,7 @@ BACKUP_DIR="$CONFIG_DIR/backups"
 DEFAULT_SYNCLIST="CLAUDE.md
 settings.json
 skills/
-agents/
-plugins.list"
+agents/"
 
 EXCLUDE_PATTERNS="skills/claude-sync/"
 
@@ -31,7 +30,7 @@ Commands:
     update    Self-update from git repo
     init      First-time setup (install + launch Claude for config)
     fix       Launch Claude to resolve sync conflicts
-    resolve   Accept local version for conflicting files (local → remote + base)
+    resolve [files...]  Accept local version for conflicting files (local → remote + base)
 
 Options:
     -n, --dry-run   Preview actions without applying (sync)
@@ -355,9 +354,48 @@ generate_plugins_list() {
     local installed="$CLAUDE_DIR/plugins/installed_plugins.json"
     local plugins_list="$CLAUDE_DIR/plugins.list"
     if [[ -f "$installed" ]]; then
-        # Extract "plugin@marketplace" keys from the JSON
         grep -oP '"[^"]+@[^"]+"' "$installed" | tr -d '"' | sort -u > "$plugins_list"
     fi
+}
+
+# Merge plugins.list: union if both sides only added, conflict if remote removed something.
+# Returns: "clean", "merged", or "conflict"
+merge_plugins_list() {
+    local local_file="$CLAUDE_DIR/plugins.list"
+    local base_file="$LAST_SYNC_DIR/plugins.list"
+    local remote_file="$1"  # path to remote plugins.list (from tmpdir or REMOTE_PATH)
+
+    # If neither exists, nothing to do
+    [[ ! -f "$local_file" && ! -f "$remote_file" ]] && echo "clean" && return
+
+    local local_list="" base_list="" remote_list=""
+    [[ -f "$local_file" ]] && local_list=$(sort -u "$local_file")
+    [[ -f "$base_file" ]] && base_list=$(sort -u "$base_file")
+    [[ -f "$remote_file" ]] && remote_list=$(sort -u "$remote_file")
+
+    # If identical, clean
+    if [[ "$local_list" == "$remote_list" ]]; then
+        echo "clean"
+        return
+    fi
+
+    # Check if remote removed plugins that local still has
+    if [[ -n "$base_list" && -n "$remote_list" ]]; then
+        local removed_from_remote
+        removed_from_remote=$(comm -23 <(echo "$base_list") <(echo "$remote_list"))
+        local still_in_local
+        still_in_local=$(comm -12 <(echo "$removed_from_remote") <(echo "$local_list"))
+        if [[ -n "$still_in_local" ]]; then
+            echo "conflict"
+            echo "Remote removed plugins still present locally:" >&2
+            echo "$still_in_local" | sed 's/^/  /' >&2
+            return
+        fi
+    fi
+
+    # Safe to merge: union of both
+    { echo "$local_list"; echo "$remote_list"; } | sort -u > "$local_file"
+    echo "merged"
 }
 
 # --- Backups ---
@@ -566,10 +604,83 @@ cmd_sync() {
         remove_from_base "$filepath"
     done <<< "$base_remove_list"
 
-    rm -rf "$tmpdir"
     prune_old_backups
 
-    # Phase 7: Report conflicts
+    local plugins_changed=false
+
+    # Phase 8: Merge plugins.list (handled separately — additive merge, not three-way)
+    generate_plugins_list
+    local remote_plugins_file
+    if [[ -z "${REMOTE_HOST:-}" ]]; then
+        remote_plugins_file="$REMOTE_PATH/plugins.list"
+    else
+        # Already fetched by remote_init, but plugins.list wasn't in the checksum
+        # Fetch it now — single small file
+        remote_plugins_file="$tmpdir/remote_plugins.list"
+        if ! rsync -a "$REMOTE_HOST:$REMOTE_PATH/plugins.list" "$remote_plugins_file" 2>/dev/null; then
+            remote_plugins_file=""  # doesn't exist on remote yet
+        fi
+    fi
+
+    # Recreate tmpdir if it was cleaned up
+    [[ -d "$tmpdir" ]] || tmpdir=$(mktemp -d)
+
+    if [[ -n "$remote_plugins_file" && -f "$remote_plugins_file" ]]; then
+        local merge_result
+        merge_result=$(merge_plugins_list "$remote_plugins_file")
+        case "$merge_result" in
+            clean) ;;
+            merged)
+                # Push merged list to remote + update base
+                if ! $DRY_RUN; then
+                    if [[ -z "${REMOTE_HOST:-}" ]]; then
+                        cp "$CLAUDE_DIR/plugins.list" "$REMOTE_PATH/plugins.list"
+                    else
+                        rsync -a "$CLAUDE_DIR/plugins.list" "$REMOTE_HOST:$REMOTE_PATH/plugins.list"
+                    fi
+                    mkdir -p "$LAST_SYNC_DIR"
+                    cp "$CLAUDE_DIR/plugins.list" "$LAST_SYNC_DIR/plugins.list"
+                    echo "plugins.list: merged (union of both sides)"
+                    plugins_changed=true
+                else
+                    echo "[dry-run] plugins.list: would merge"
+                fi
+                ;;
+            conflict)
+                echo "CONFLICT: plugins.list (remote removed plugins still present locally)" >&2
+                conflict_list+="plugins.list"$'\n'
+                ;;
+        esac
+    elif [[ -f "$CLAUDE_DIR/plugins.list" ]]; then
+        # Only local exists — push to remote
+        if ! $DRY_RUN; then
+            if [[ -z "${REMOTE_HOST:-}" ]]; then
+                cp "$CLAUDE_DIR/plugins.list" "$REMOTE_PATH/plugins.list"
+            else
+                rsync -a "$CLAUDE_DIR/plugins.list" "$REMOTE_HOST:$REMOTE_PATH/plugins.list"
+            fi
+            mkdir -p "$LAST_SYNC_DIR"
+            cp "$CLAUDE_DIR/plugins.list" "$LAST_SYNC_DIR/plugins.list"
+            echo "pushed: plugins.list"
+        else
+            echo "[dry-run] push: plugins.list"
+        fi
+    fi
+
+    rm -rf "$tmpdir" 2>/dev/null || true
+
+    # Auto-install missing plugins if plugins.list changed
+    if $plugins_changed && ! $DRY_RUN && command -v claude >/dev/null 2>&1; then
+        echo "Installing missing plugins..." >&2
+        while IFS= read -r plugin; do
+            [[ -z "$plugin" ]] && continue
+            claude plugin install "$plugin" --scope user 2>/dev/null && \
+                echo "  installed: $plugin" || \
+                echo "  skipped: $plugin" 2>/dev/null
+        done < "$CLAUDE_DIR/plugins.list"
+    fi
+
+    # Report conflicts (from both normal sync and plugins merge)
     if [[ -n "$conflict_list" ]]; then
         echo "$conflict_list" | sed '/^$/d' | sed 's/^/CONFLICT: /' >&2
         notify-send "claude-sync" "claude-sync: conflicts detected — run 'claude-sync fix'" 2>/dev/null || true
@@ -577,15 +688,8 @@ cmd_sync() {
         return 1
     fi
 
-    if [[ -z "$push_list$pull_list$delete_remote_list$delete_local_list" ]]; then
+    if [[ -z "$push_list$pull_list$delete_remote_list$delete_local_list" ]] && ! $plugins_changed; then
         echo "Everything in sync."
-    fi
-
-    # Check if plugins.list was pulled — warn about new plugins to install
-    if echo "$pull_list" | grep -qF "plugins.list"; then
-        echo ""
-        echo "plugins.list was updated from remote. New plugins may need installing." >&2
-        echo "Run 'claude-sync fix' or manually: claude plugin install <name>@<marketplace>" >&2
     fi
 }
 
@@ -651,6 +755,8 @@ cmd_diff() {
 # Accept local version as the resolved merge for conflicting files.
 # Pushes local → remote and updates base. Only for files currently in conflict.
 cmd_resolve() {
+    local requested_files=("$@")
+
     acquire_local_lock
     local remote_checksums
     if ! remote_checksums=$(remote_init); then
@@ -667,7 +773,7 @@ cmd_resolve() {
     synclist=$(load_synclist)
     all_files=$(build_file_union "$synclist")
 
-    # Find files in conflict
+    # Find files in conflict, filter by requested files if any
     local resolved_count=0
     local tmpdir
     tmpdir=$(mktemp -d)
@@ -683,12 +789,27 @@ cmd_resolve() {
         action=$(decide_action "$local_hash" "$base_hash" "$remote_hash")
 
         if [[ "$action" == "conflict" ]]; then
+            # If specific files requested, only resolve those
+            if (( ${#requested_files[@]} > 0 )); then
+                local match=false
+                for req in "${requested_files[@]}"; do
+                    [[ "$filepath" == "$req" ]] && match=true && break
+                done
+                $match || continue
+            fi
             echo "$filepath" >> "$push_file"
             (( resolved_count++ )) || true
         fi
     done <<< "$all_files"
 
     if (( resolved_count == 0 )); then
+        if (( ${#requested_files[@]} > 0 )); then
+            echo "error: specified files are not in conflict" >&2
+            rm -rf "$tmpdir"
+            release_remote_lock
+            trap release_local_lock EXIT
+            return 1
+        fi
         echo "No conflicts to resolve."
         rm -rf "$tmpdir"
         release_remote_lock
