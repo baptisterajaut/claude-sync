@@ -352,7 +352,9 @@ create_local_backup() {
     local files
     files=$(enumerate_files "$CLAUDE_DIR" "$synclist")
     if [[ -n "$files" ]]; then
-        local backup_file="$BACKUP_DIR/$(date -Iseconds).tar.gz"
+        local backup_file
+        backup_file="$BACKUP_DIR/$(date -Iseconds).tar.gz"
+        # shellcheck disable=SC2086
         tar -czf "$backup_file" -C "$CLAUDE_DIR" $files 2>/dev/null || true
     fi
 }
