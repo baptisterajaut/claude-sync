@@ -209,6 +209,81 @@ decide_action() {
     fi
 }
 
+# --- Status command ---
+
+action_label() {
+    case "$1" in
+        clean)          echo "clean" ;;
+        push)           echo "local→" ;;
+        push-new)       echo "new-local" ;;
+        pull)           echo "←remote" ;;
+        pull-new)       echo "new-remote" ;;
+        update-base|create-base) echo "clean" ;;
+        delete-remote)  echo "local→(del)" ;;
+        delete-local)   echo "←remote(del)" ;;
+        delete-base)    echo "clean" ;;
+        conflict)       echo "CONFLICT" ;;
+    esac
+}
+
+build_file_union() {
+    local synclist="$1"
+    {
+        enumerate_files "$CLAUDE_DIR" "$synclist"
+        enumerate_files "$LAST_SYNC_DIR" "$synclist"
+        if [[ -z "${REMOTE_HOST:-}" ]]; then
+            enumerate_files "$REMOTE_PATH" "$synclist"
+        else
+            ssh "$REMOTE_HOST" "cd \"$REMOTE_PATH\" 2>/dev/null && find . -type f 2>/dev/null | sed 's|^\./||'" | while IFS= read -r f; do
+                if ! is_excluded "$f"; then
+                    while IFS= read -r entry; do
+                        [[ -z "$entry" ]] && continue
+                        if [[ "$entry" == */ && "$f" == "$entry"* ]] || [[ "$f" == "$entry" ]]; then
+                            echo "$f"
+                            break
+                        fi
+                    done <<< "$synclist"
+                fi
+            done
+        fi
+    } | sort -u
+}
+
+cmd_status() {
+    fetch_remote_checksums_readonly
+    local synclist
+    synclist=$(load_synclist)
+    local all_files
+    all_files=$(build_file_union "$synclist")
+
+    if [[ -z "$all_files" ]]; then
+        echo "No files to sync."
+        return 0
+    fi
+
+    local has_conflict=false
+    while IFS= read -r filepath; do
+        [[ -z "$filepath" ]] && continue
+        local local_hash base_hash remote_hash
+        local_hash=$(compute_local_checksums "$CLAUDE_DIR" "$filepath" | awk '{print $1}')
+        base_hash=$(compute_local_checksums "$LAST_SYNC_DIR" "$filepath" | awk '{print $1}')
+        remote_hash=$(get_remote_checksum "$filepath" | awk '{print $1}')
+
+        local action
+        action=$(decide_action "$local_hash" "$base_hash" "$remote_hash")
+        local label
+        label=$(action_label "$action")
+
+        printf "%-15s %s\n" "$label" "$filepath"
+        [[ "$action" == "conflict" ]] && has_conflict=true
+    done <<< "$all_files"
+
+    if $has_conflict; then
+        echo ""
+        echo "Run /claude-sync:fix to resolve conflicts." >&2
+    fi
+}
+
 # Allow sourcing for tests
 if [[ "${1:-}" == "--source-only" ]]; then
     return 0 2>/dev/null || exit 0
