@@ -12,11 +12,12 @@ Sync your Claude Code configuration across machines using rsync over SSH.
 ## Quick start
 
 ```bash
-# Clone
-git clone <repo-url> ~/claude-syncer
+# Clone wherever you want
+git clone git@github.com:baptisterajaut/claude-sync.git
+cd claude-sync
 
 # Install (symlinks script to ~/.local/bin, copies skills to ~/.claude/skills/)
-~/claude-syncer/claude-sync install
+./claude-sync install
 
 # Init (run in Claude Code)
 # /claude-sync:init
