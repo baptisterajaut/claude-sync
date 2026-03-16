@@ -99,7 +99,27 @@ Read `~/.claude/settings.json`.
 
 **Check first:** If a hook with command `claude-sync sync` already exists in `SessionStart`, skip this step entirely. Do NOT add a duplicate.
 
-If not present, add the SessionStart hook. Be careful to merge with existing hooks — do not overwrite other hooks that may exist. Read the current JSON, add to the array, write back.
+If not present, add a `SessionStart` entry to the `hooks` object. The exact format is:
+
+```json
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "claude-sync sync"
+          }
+        ]
+      }
+    ]
+  }
+}
+```
+
+Be careful to **merge** with existing settings — do not overwrite `enabledPlugins`, `effortLevel`, or other existing keys. Read the current JSON, add/update only the `hooks.SessionStart` entry, write back.
 
 ## Step 8: Verify
 
