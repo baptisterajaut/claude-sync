@@ -118,6 +118,59 @@ teardown() { teardown_test_env; }
     [[ "$output" == *"Everything in sync"* ]]
 }
 
+@test "resolve: pushes local version for conflicting files" {
+    export CLAUDE_SYNC_CONFIG_DIR="$CONFIG_DIR"
+    echo "CLAUDE.md" > "$CONFIG_DIR/synclist"
+    echo "original" > "$BASE_DIR/CLAUDE.md"
+    echo "local merge" > "$LOCAL_DIR/CLAUDE.md"
+    echo "remote version" > "$REMOTE_DIR/CLAUDE.md"
+    # Verify it's a conflict
+    run bash ./claude-sync sync
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"CONFLICT"* ]]
+    # Resolve: local wins
+    run bash ./claude-sync resolve
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"resolved"* ]]
+    [ "$(cat "$REMOTE_DIR/CLAUDE.md")" = "local merge" ]
+    [ "$(cat "$BASE_DIR/CLAUDE.md")" = "local merge" ]
+    # Sync should now be clean
+    run bash ./claude-sync sync
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"Everything in sync"* ]]
+}
+
+@test "resolve: does nothing when no conflicts" {
+    export CLAUDE_SYNC_CONFIG_DIR="$CONFIG_DIR"
+    echo "CLAUDE.md" > "$CONFIG_DIR/synclist"
+    echo "same" > "$LOCAL_DIR/CLAUDE.md"
+    echo "same" > "$REMOTE_DIR/CLAUDE.md"
+    echo "same" > "$BASE_DIR/CLAUDE.md"
+    run bash ./claude-sync resolve
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"No conflicts"* ]]
+}
+
+@test "resolve: only affects conflicting files, not clean ones" {
+    export CLAUDE_SYNC_CONFIG_DIR="$CONFIG_DIR"
+    echo "CLAUDE.md
+settings.json" > "$CONFIG_DIR/synclist"
+    # CLAUDE.md: conflict
+    echo "base" > "$BASE_DIR/CLAUDE.md"
+    echo "local" > "$LOCAL_DIR/CLAUDE.md"
+    echo "remote" > "$REMOTE_DIR/CLAUDE.md"
+    # settings.json: clean
+    echo "clean" > "$BASE_DIR/settings.json"
+    echo "clean" > "$LOCAL_DIR/settings.json"
+    echo "clean" > "$REMOTE_DIR/settings.json"
+    run bash ./claude-sync resolve
+    [ "$status" -eq 0 ]
+    # CLAUDE.md resolved
+    [ "$(cat "$REMOTE_DIR/CLAUDE.md")" = "local" ]
+    # settings.json untouched
+    [ "$(cat "$REMOTE_DIR/settings.json")" = "clean" ]
+}
+
 @test "sync: push-only does not create backup" {
     export CLAUDE_SYNC_CONFIG_DIR="$CONFIG_DIR"
     echo "CLAUDE.md" > "$CONFIG_DIR/synclist"
