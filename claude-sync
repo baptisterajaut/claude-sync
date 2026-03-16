@@ -61,7 +61,7 @@ load_config() {
 load_synclist() {
     local synclist_file="$CONFIG_DIR/synclist"
     if [[ -f "$synclist_file" ]]; then
-        grep -v '^#' "$synclist_file" | grep -v '^$'
+        grep -v '^#' "$synclist_file" | grep -v '^$' || true
     else
         echo "$DEFAULT_SYNCLIST"
     fi
