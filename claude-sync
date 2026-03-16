@@ -126,6 +126,46 @@ is_excluded() {
     return 1
 }
 
+# --- Checksums ---
+
+compute_local_checksums() {
+    local root_dir="$1"
+    shift
+    local files="$*"
+
+    while IFS= read -r filepath; do
+        [[ -z "$filepath" ]] && continue
+        if [[ -f "$root_dir/$filepath" ]]; then
+            local hash
+            hash=$(md5sum "$root_dir/$filepath" | awk '{print $1}')
+            echo "$hash $filepath"
+        else
+            echo "ABSENT $filepath"
+        fi
+    done <<< "$files"
+}
+
+REMOTE_CHECKSUMS_CACHE=""
+
+fetch_remote_checksums_readonly() {
+    if [[ -z "${REMOTE_HOST:-}" ]]; then
+        REMOTE_CHECKSUMS_CACHE=$(cd "$REMOTE_PATH" 2>/dev/null && find . -type f -not -name ".claude-sync.lock" -exec md5sum {} + 2>/dev/null | sed 's| \./| |' || true)
+    else
+        REMOTE_CHECKSUMS_CACHE=$(ssh "$REMOTE_HOST" "cd \"$REMOTE_PATH\" 2>/dev/null && find . -type f -not -name \".claude-sync.lock\" -exec md5sum {} + 2>/dev/null | sed 's| \./| |'" || true)
+    fi
+}
+
+get_remote_checksum() {
+    local filepath="$1"
+    local line
+    line=$(echo "$REMOTE_CHECKSUMS_CACHE" | grep -F " $filepath" | head -1)
+    if [[ -n "$line" ]]; then
+        echo "$line"
+    else
+        echo "ABSENT $filepath"
+    fi
+}
+
 # Allow sourcing for tests
 if [[ "${1:-}" == "--source-only" ]]; then
     return 0 2>/dev/null || exit 0
