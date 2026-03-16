@@ -171,6 +171,70 @@ settings.json" > "$CONFIG_DIR/synclist"
     [ "$(cat "$REMOTE_DIR/settings.json")" = "clean" ]
 }
 
+@test "resolve: only resolves specified files" {
+    export CLAUDE_SYNC_CONFIG_DIR="$CONFIG_DIR"
+    echo "CLAUDE.md
+settings.json" > "$CONFIG_DIR/synclist"
+    # Both in conflict
+    echo "base1" > "$BASE_DIR/CLAUDE.md"
+    echo "local1" > "$LOCAL_DIR/CLAUDE.md"
+    echo "remote1" > "$REMOTE_DIR/CLAUDE.md"
+    echo "base2" > "$BASE_DIR/settings.json"
+    echo "local2" > "$LOCAL_DIR/settings.json"
+    echo "remote2" > "$REMOTE_DIR/settings.json"
+    # Resolve only CLAUDE.md
+    run bash ./claude-sync resolve CLAUDE.md
+    [ "$status" -eq 0 ]
+    # CLAUDE.md resolved
+    [ "$(cat "$REMOTE_DIR/CLAUDE.md")" = "local1" ]
+    [ "$(cat "$BASE_DIR/CLAUDE.md")" = "local1" ]
+    # settings.json still in conflict (remote untouched)
+    [ "$(cat "$REMOTE_DIR/settings.json")" = "remote2" ]
+    [ "$(cat "$BASE_DIR/settings.json")" = "base2" ]
+}
+
+@test "resolve: errors when specified file not in conflict" {
+    export CLAUDE_SYNC_CONFIG_DIR="$CONFIG_DIR"
+    echo "CLAUDE.md" > "$CONFIG_DIR/synclist"
+    echo "same" > "$LOCAL_DIR/CLAUDE.md"
+    echo "same" > "$REMOTE_DIR/CLAUDE.md"
+    echo "same" > "$BASE_DIR/CLAUDE.md"
+    run bash ./claude-sync resolve CLAUDE.md
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"not in conflict"* ]]
+}
+
+@test "sync: plugins.list auto-merges union of both sides" {
+    export CLAUDE_SYNC_CONFIG_DIR="$CONFIG_DIR"
+    echo "CLAUDE.md" > "$CONFIG_DIR/synclist"
+    echo "same" > "$LOCAL_DIR/CLAUDE.md"
+    echo "same" > "$REMOTE_DIR/CLAUDE.md"
+    echo "same" > "$BASE_DIR/CLAUDE.md"
+    # Local has plugin A, remote has plugin B, base has neither
+    printf "pluginA@market\n" > "$LOCAL_DIR/plugins.list"
+    printf "pluginB@market\n" > "$REMOTE_DIR/plugins.list"
+    run bash ./claude-sync sync
+    [ "$status" -eq 0 ]
+    # Local should have both
+    grep -q "pluginA@market" "$LOCAL_DIR/plugins.list"
+    grep -q "pluginB@market" "$LOCAL_DIR/plugins.list"
+    # Remote should have both
+    grep -q "pluginA@market" "$REMOTE_DIR/plugins.list"
+    grep -q "pluginB@market" "$REMOTE_DIR/plugins.list"
+}
+
+@test "sync: plugins.list pushes local when remote empty" {
+    export CLAUDE_SYNC_CONFIG_DIR="$CONFIG_DIR"
+    echo "CLAUDE.md" > "$CONFIG_DIR/synclist"
+    echo "same" > "$LOCAL_DIR/CLAUDE.md"
+    echo "same" > "$REMOTE_DIR/CLAUDE.md"
+    echo "same" > "$BASE_DIR/CLAUDE.md"
+    printf "pluginA@market\n" > "$LOCAL_DIR/plugins.list"
+    run bash ./claude-sync sync
+    [ "$status" -eq 0 ]
+    [ "$(cat "$REMOTE_DIR/plugins.list")" = "pluginA@market" ]
+}
+
 @test "sync: push-only does not create backup" {
     export CLAUDE_SYNC_CONFIG_DIR="$CONFIG_DIR"
     echo "CLAUDE.md" > "$CONFIG_DIR/synclist"
