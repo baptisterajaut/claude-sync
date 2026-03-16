@@ -1,0 +1,10 @@
+# Default synclist for claude-sync
+# One path per line. Directories end with /
+# Override by creating ~/.config/claude-sync/synclist
+
+CLAUDE.md
+settings.json
+skills/
+agents/
+plugins/installed_plugins.json
+plugins/known_marketplaces.json
