@@ -6,5 +6,4 @@ CLAUDE.md
 settings.json
 skills/
 agents/
-plugins/installed_plugins.json
-plugins/known_marketplaces.json
+plugins.list
