@@ -775,11 +775,30 @@ cmd_diff() {
         return 0
     fi
 
+    # Fetch remote versions of changed files to a temp dir
+    local tmpdir
+    tmpdir=$(mktemp -d)
+    local fetch_list="$tmpdir/fetch_list"
+    echo "$changed_files" | sed '/^$/d' > "$fetch_list"
+
+    if [[ -z "${REMOTE_HOST:-}" ]]; then
+        # Local mode: copy from REMOTE_PATH
+        while IFS= read -r f; do
+            [[ -z "$f" ]] && continue
+            if [[ -f "$REMOTE_PATH/$f" ]]; then
+                mkdir -p "$(dirname "$tmpdir/remote/$f")"
+                cp "$REMOTE_PATH/$f" "$tmpdir/remote/$f"
+            fi
+        done < "$fetch_list"
+    else
+        rsync -a --files-from="$fetch_list" "$REMOTE_HOST:$REMOTE_PATH/" "$tmpdir/remote/" 2>/dev/null || true
+    fi
+
     while IFS= read -r filepath; do
         [[ -z "$filepath" ]] && continue
         local action="${file_actions[$filepath]}"
         local local_file="$CLAUDE_DIR/$filepath"
-        local remote_file="$REMOTE_PATH/$filepath"  # local-only mode
+        local remote_file="$tmpdir/remote/$filepath"
 
         local local_hash remote_hash
         local_hash=$(compute_local_checksums "$CLAUDE_DIR" "$filepath" | awk '{print $1}')
@@ -797,6 +816,8 @@ cmd_diff() {
         fi
         echo ""
     done <<< "$changed_files"
+
+    rm -rf "$tmpdir"
 }
 
 # --- Resolve command ---

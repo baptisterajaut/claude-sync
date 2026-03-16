@@ -11,68 +11,38 @@ allowed-tools: Bash, Read, Edit, Write
 
 You are resolving sync conflicts detected by claude-sync. Follow these steps.
 
-**IMPORTANT — Minimize SSH:** Never run individual `ssh cat` commands per file. Fetch all remote files in ONE rsync call.
-
-## Step 1: Get conflict list
-
-Run `claude-sync status` to see per-file status. Identify which files are `CONFLICT`.
-
-## Step 2: Fetch remote files locally
-
-Fetch all remote files in ONE rsync call so you can read them without further SSH:
-
-Read `~/.config/claude-sync/config` to get `REMOTE_HOST` and `REMOTE_PATH` values, then:
+## Step 1: See conflicts and diffs
 
 ```bash
-tmpdir=$(mktemp -d)
-rsync -a "<REMOTE_HOST>:<REMOTE_PATH>/" "$tmpdir/"
+claude-sync status
+claude-sync diff > /tmp/claude-sync-diff.txt
 ```
 
-Now all three versions are local:
-- **Local:** `~/.claude/<file>`
-- **Remote:** `$tmpdir/<file>`
-- **Base:** `~/.config/claude-sync/last-sync/<file>` (may not exist for first-sync conflicts)
+Read `/tmp/claude-sync-diff.txt` to understand all differences. Identify files marked `CONFLICT` in the status output.
 
-## Step 3: Create backup
+## Step 2: For each conflicting file
 
-```bash
-backup_dir=~/.config/claude-sync/backups/$(date -Iseconds)
-mkdir -p "$backup_dir"
-```
+1. Read the local version: `~/.claude/<file>`
+2. Read the base version (if exists): `~/.config/claude-sync/last-sync/<file>`
+3. The remote version is visible in `/tmp/claude-sync-diff.txt`
 
-For each conflicting file:
-```bash
-cp ~/.claude/<file> "$backup_dir/<file>.local"
-cp "$tmpdir/<file>" "$backup_dir/<file>.remote"
-cp ~/.config/claude-sync/last-sync/<file> "$backup_dir/<file>.base" 2>/dev/null || true
-```
-
-## Step 4: For each conflicting file
-
-1. Read versions locally using the Read tool (already fetched, no SSH, no stdout truncation).
-
-2. Analyze the differences semantically:
+4. Analyze the differences semantically:
    - For `.md` files: identify added/removed/modified sections
    - For `.json` files: compare key-by-key, identify added/changed/removed keys
    - For directories with file conflicts: handle each file independently
 
-3. Propose a merged version:
+5. Propose a merged version:
    - Combine additions from both sides
-   - For conflicting modifications to the same section/key: present both versions and ask the user to choose or provide a resolution
-   - Explain your reasoning for the proposed merge
+   - For conflicting modifications to the same section/key: present both versions and ask the user to choose
+   - Explain your reasoning
 
-4. Ask the user to approve the merge. If they want changes, iterate.
+6. Ask the user to approve the merge. If they want changes, iterate.
 
-5. Once approved, write the resolved version **locally only**:
-   ```bash
-   cat > ~/.claude/<file> <<'EOF'
-   <merged content>
-   EOF
-   ```
+7. Once approved, apply the merge to the local file using the Edit or Write tool.
 
-## Step 5: Push resolved files
+## Step 3: Push resolved files
 
-After ALL conflicts are resolved locally, run `resolve` which pushes local → remote and updates base for all conflicting files:
+After ALL conflicts are resolved locally:
 
 ```bash
 claude-sync resolve <file1> <file2> ...
@@ -80,12 +50,10 @@ claude-sync resolve <file1> <file2> ...
 
 Pass the exact file paths that were resolved (relative to `~/.claude/`). Only those files will be pushed. Files not in conflict will error.
 
-Then verify with `claude-sync sync` — should report "Everything in sync."
-
-## Step 6: Cleanup
+Then verify:
 
 ```bash
-rm -rf "$tmpdir"
+claude-sync sync
 ```
 
-Print: "All conflicts resolved. Config is in sync."
+Should report "Everything in sync."

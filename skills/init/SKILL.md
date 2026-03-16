@@ -91,33 +91,18 @@ Run: `claude-sync sync`
 
 - If it succeeds with no conflicts → move to step 6
 - If it fails with conflicts → resolve them:
-  1. Fetch all remote files locally in one rsync call:
-     Read `~/.config/claude-sync/config` to get `REMOTE_HOST` and `REMOTE_PATH`, then:
+  1. Get the diffs:
      ```bash
-     tmpdir=$(mktemp -d)
-     rsync -a "<REMOTE_HOST>:<REMOTE_PATH>/" "$tmpdir/"
+     claude-sync diff > /tmp/claude-sync-diff.txt
      ```
-  2. For each conflicting file, read versions **locally** with the Read tool (no SSH, no stdout truncation):
-     - Local: `~/.claude/<file>`
-     - Remote: `$tmpdir/<file>`
-     - Base: `~/.config/claude-sync/last-sync/<file>` (won't exist on first sync)
-  3. Show the user both versions with a semantic explanation of the differences
+  2. Read `/tmp/claude-sync-diff.txt` and the local files (`~/.claude/<file>`) with the Read tool
+  3. For each conflicting file, show the user both versions with a semantic explanation
   4. Propose a merged version (for CLAUDE.md, merge unique sections; for settings.json, merge JSON keys)
   5. Ask the user to approve the merge
-  6. Once approved, write the resolved version **locally only**:
+  6. Apply the merge to the local file using the Edit or Write tool
+  7. After resolving ALL conflicts locally, push and verify:
      ```bash
-     cat > ~/.claude/<file> <<'EOF'
-     <merged content>
-     EOF
-     ```
-  7. After resolving ALL conflicts locally, push them with resolve and clean up:
-     ```bash
-     rm -rf "$tmpdir"
      claude-sync resolve <file1> <file2> ...
-     ```
-     Pass only the files you actually resolved.
-     This pushes local → remote and updates base only for files in conflict. Then verify:
-     ```bash
      claude-sync sync
      ```
      Should report "Everything in sync."
