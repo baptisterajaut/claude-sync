@@ -674,12 +674,10 @@ cmd_init() {
         echo "Linked: $target → $repo_dir/claude-sync"
     fi
 
-    if ! echo "$PATH" | tr ':' '\n' | grep -qxF "$target_dir"; then
-        echo "warning: $target_dir is not in your PATH" >&2
-        echo "Add to ~/.bashrc:  export PATH=\"\$HOME/.local/bin:\$PATH\"" >&2
-    fi
+    # Add to PATH for this session so claude-sync works inside Claude
+    export PATH="$target_dir:$PATH"
 
-    # Launch Claude with the plugin to run /claude-sync:init
+    # Launch Claude with the plugin — the skill handles PATH persistence
     cmd_launch_skill "init"
 }
 

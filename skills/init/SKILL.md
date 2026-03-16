@@ -23,12 +23,27 @@ If it succeeds (exit 0, outputs file status), claude-sync is already configured.
 
 **Stop here** unless the user explicitly wants to re-initialize.
 
-## Step 1: Check prerequisites
+## Step 1: Check prerequisites and PATH
 
-The symlink to `claude-sync` in PATH is already handled by the `claude-sync init` bash command before this skill launches. Verify it's in place:
+The symlink to `claude-sync` in `~/.local/bin/` is already created by the `claude-sync init` bash command before this skill launches. But `~/.local/bin` may not be in the user's PATH persistently.
 
-Run:
-- `which claude-sync` — should be in PATH (if not, warn the user to check `~/.local/bin` is in their PATH)
+Run: `which claude-sync`
+
+If it works, good. If not, `~/.local/bin` isn't in PATH. Fix it:
+
+1. Detect the user's shell: `echo $SHELL`
+2. Determine the rc file:
+   - `/bin/bash` or `/usr/bin/bash` → `~/.bashrc`
+   - `/bin/zsh` or `/usr/bin/zsh` → `~/.zshrc`
+   - Other → `~/.profile`
+3. Check if the PATH export already exists: `grep -F '.local/bin' <rc-file>`
+4. If not present, append:
+   ```bash
+   echo 'export PATH="$HOME/.local/bin:$PATH"' >> <rc-file>
+   ```
+5. Tell the user it's been added and will take effect on next shell (current session already has it via `claude-sync init`).
+
+Also check:
 - `which rsync` — must be available
 - `which ssh` — must be available
 
