@@ -695,7 +695,9 @@ cmd_launch_skill() {
         exit 1
     fi
 
-    exec claude --plugin-dir "$repo_dir" "/claude-sync:$skill_name"
+    exec claude --plugin-dir "$repo_dir" \
+        --append-system-prompt "When the user sends a message starting with /, invoke the corresponding skill immediately using the Skill tool. Do not explain what the skill does — just invoke it." \
+        "/claude-sync:$skill_name"
 }
 
 # Allow sourcing for tests
