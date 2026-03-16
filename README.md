@@ -34,6 +34,17 @@ cd claude-sync
 
 Use `--dry-run` / `-n` with `sync` to preview without applying.
 
+## Prerequisites
+
+- **bash** (>= 4.0), **rsync**, **ssh**
+- **SSH key-based auth** to your sync server — claude-sync runs non-interactively (SessionStart hook), so password prompts will hang. Set up pubkey auth:
+
+```bash
+ssh-keygen -t ed25519               # if you don't have a key yet
+ssh-copy-id user@your-server.com    # copy it to the server
+ssh user@your-server.com "echo ok"  # verify it works without password
+```
+
 ## Config
 
 `~/.config/claude-sync/config` (created by `init`):
@@ -75,3 +86,13 @@ Three-way comparison: for each file, compare LOCAL, BASE (last-sync snapshot), a
 - Both changed same way → update base only
 
 No `push` or `pull` commands. No way to accidentally overwrite.
+
+## Why not...?
+
+| Project | Approach | Limitation |
+|---------|----------|------------|
+| [brianlovin/agent-config](https://github.com/brianlovin/agent-config) | Git + symlinks | Manual push/pull, symlinks fragile with rsync, no conflict detection |
+| [miwidot/ccms](https://github.com/miwidot/ccms) | rsync + SSH | Push/pull overwrites destination, no three-way, no conflict safety |
+| [claude-code-config-sync](https://www.npmjs.com/package/claude-code-config-sync) | MCP server + git | Heavy (Node.js), git-based, no three-way snapshot |
+
+claude-sync uses a **three-way snapshot** (`last-sync/`) to detect who changed what — so it never blindly overwrites. Conflicts are resolved interactively through Claude, not silently lost.
