@@ -149,6 +149,7 @@ is_excluded() {
 
 # --- Checksums ---
 
+# Per-file checksum (used only when caches aren't available)
 compute_local_checksums() {
     local root_dir="$1"
     shift
@@ -166,26 +167,48 @@ compute_local_checksums() {
     done <<< "$files"
 }
 
-REMOTE_CHECKSUMS_CACHE=""
+# --- Checksum caches (batch computation) ---
+
+declare -A LOCAL_CHECKSUMS BASE_CHECKSUMS REMOTE_CHECKSUMS
+
+_load_checksums_into() {
+    local -n _map=$1
+    local dir="$2"
+    _map=()
+    [[ -d "$dir" ]] || return 0
+    while IFS=' ' read -r hash filepath; do
+        [[ -z "$hash" || -z "$filepath" ]] && continue
+        _map["$filepath"]="$hash"
+    done < <(cd "$dir" && find . -type f -exec md5sum {} + 2>/dev/null | sed 's| \./| |')
+}
+
+fetch_all_local_checksums() {
+    _load_checksums_into LOCAL_CHECKSUMS "$CLAUDE_DIR"
+    _load_checksums_into BASE_CHECKSUMS "$LAST_SYNC_DIR"
+}
+
+_load_remote_checksums_from_output() {
+    REMOTE_CHECKSUMS=()
+    while IFS=' ' read -r hash filepath; do
+        [[ -z "$hash" || -z "$filepath" ]] && continue
+        REMOTE_CHECKSUMS["$filepath"]="$hash"
+    done <<< "$1"
+}
+
+get_local_checksum() { echo "${LOCAL_CHECKSUMS[$1]:-ABSENT} $1"; }
+get_base_checksum() { echo "${BASE_CHECKSUMS[$1]:-ABSENT} $1"; }
+get_remote_checksum() { echo "${REMOTE_CHECKSUMS[$1]:-ABSENT} $1"; }
 
 fetch_remote_checksums_readonly() {
+    local output
     if [[ -z "${REMOTE_HOST:-}" ]]; then
-        REMOTE_CHECKSUMS_CACHE=$(cd "$REMOTE_PATH" 2>/dev/null && find . -type f -not -name ".claude-sync.lock" -exec md5sum {} + 2>/dev/null | sed 's| \./| |' || true)
+        output=$(cd "$REMOTE_PATH" 2>/dev/null && find . -type f -not -name ".claude-sync.lock" -exec md5sum {} + 2>/dev/null | sed 's| \./| |' || true)
     else
-        REMOTE_CHECKSUMS_CACHE=$($SSH_CMD "$REMOTE_HOST" "cd \"$REMOTE_PATH\" 2>/dev/null && find . -type f -not -name \".claude-sync.lock\" -exec md5sum {} + 2>/dev/null | sed 's| \./| |'" || true)
+        output=$($SSH_CMD "$REMOTE_HOST" "cd \"$REMOTE_PATH\" 2>/dev/null && find . -type f -not -name \".claude-sync.lock\" -exec md5sum {} + 2>/dev/null | sed 's| \./| |'" || true)
     fi
+    _load_remote_checksums_from_output "$output"
 }
 
-get_remote_checksum() {
-    local filepath="$1"
-    local line
-    line=$(echo "$REMOTE_CHECKSUMS_CACHE" | grep -F " $filepath" | head -1)
-    if [[ -n "$line" ]]; then
-        echo "$line"
-    else
-        echo "ABSENT $filepath"
-    fi
-}
 
 # --- Three-way comparison ---
 
@@ -271,6 +294,7 @@ build_file_union() {
 }
 
 cmd_status() {
+    fetch_all_local_checksums
     fetch_remote_checksums_readonly
     local synclist
     synclist=$(load_synclist)
@@ -286,8 +310,8 @@ cmd_status() {
     while IFS= read -r filepath; do
         [[ -z "$filepath" ]] && continue
         local local_hash base_hash remote_hash
-        local_hash=$(compute_local_checksums "$CLAUDE_DIR" "$filepath" | awk '{print $1}')
-        base_hash=$(compute_local_checksums "$LAST_SYNC_DIR" "$filepath" | awk '{print $1}')
+        local_hash=$(get_local_checksum "$filepath" | awk '{print $1}')
+        base_hash=$(get_base_checksum "$filepath" | awk '{print $1}')
         remote_hash=$(get_remote_checksum "$filepath" | awk '{print $1}')
 
         local action
@@ -542,13 +566,16 @@ cmd_sync() {
         echo "error: could not connect to remote (locked or unreachable)" >&2
         return 1
     fi
-    REMOTE_CHECKSUMS_CACHE="$remote_checksums"
+    _load_remote_checksums_from_output "$remote_checksums"
     trap 'release_remote_lock; release_local_lock' EXIT
 
     mkdir -p "$LAST_SYNC_DIR"
 
     # Generate plugins.list before comparing checksums
     generate_plugins_list
+
+    # Pre-compute all local + base checksums in one pass
+    fetch_all_local_checksums
 
     local synclist all_files
     synclist=$(load_synclist)
@@ -569,8 +596,8 @@ cmd_sync() {
     while IFS= read -r filepath; do
         [[ -z "$filepath" ]] && continue
         local local_hash base_hash remote_hash action
-        local_hash=$(compute_local_checksums "$CLAUDE_DIR" "$filepath" | awk '{print $1}')
-        base_hash=$(compute_local_checksums "$LAST_SYNC_DIR" "$filepath" | awk '{print $1}')
+        local_hash=$(get_local_checksum "$filepath" | awk '{print $1}')
+        base_hash=$(get_base_checksum "$filepath" | awk '{print $1}')
         remote_hash=$(get_remote_checksum "$filepath" | awk '{print $1}')
         action=$(decide_action "$local_hash" "$base_hash" "$remote_hash")
 
@@ -753,6 +780,7 @@ cmd_sync() {
 # --- Diff command ---
 
 cmd_diff() {
+    fetch_all_local_checksums
     fetch_remote_checksums_readonly
     local synclist all_files
     synclist=$(load_synclist)
@@ -768,8 +796,8 @@ cmd_diff() {
     while IFS= read -r filepath; do
         [[ -z "$filepath" ]] && continue
         local local_hash base_hash remote_hash action
-        local_hash=$(compute_local_checksums "$CLAUDE_DIR" "$filepath" | awk '{print $1}')
-        base_hash=$(compute_local_checksums "$LAST_SYNC_DIR" "$filepath" | awk '{print $1}')
+        local_hash=$(get_local_checksum "$filepath" | awk '{print $1}')
+        base_hash=$(get_base_checksum "$filepath" | awk '{print $1}')
         remote_hash=$(get_remote_checksum "$filepath" | awk '{print $1}')
         action=$(decide_action "$local_hash" "$base_hash" "$remote_hash")
         if [[ "$action" != "clean" ]]; then
@@ -809,7 +837,7 @@ cmd_diff() {
         local remote_file="$tmpdir/remote/$filepath"
 
         local local_hash remote_hash
-        local_hash=$(compute_local_checksums "$CLAUDE_DIR" "$filepath" | awk '{print $1}')
+        local_hash=$(get_local_checksum "$filepath" | awk '{print $1}')
         remote_hash=$(get_remote_checksum "$filepath" | awk '{print $1}')
 
         echo "=== $filepath ($action) ==="
@@ -841,11 +869,12 @@ cmd_resolve() {
         echo "error: could not connect to remote (locked or unreachable)" >&2
         return 1
     fi
-    REMOTE_CHECKSUMS_CACHE="$remote_checksums"
+    _load_remote_checksums_from_output "$remote_checksums"
     trap 'release_remote_lock; release_local_lock' EXIT
 
     mkdir -p "$LAST_SYNC_DIR"
     generate_plugins_list
+    fetch_all_local_checksums
 
     local synclist all_files
     synclist=$(load_synclist)
@@ -861,8 +890,8 @@ cmd_resolve() {
     while IFS= read -r filepath; do
         [[ -z "$filepath" ]] && continue
         local local_hash base_hash remote_hash action
-        local_hash=$(compute_local_checksums "$CLAUDE_DIR" "$filepath" | awk '{print $1}')
-        base_hash=$(compute_local_checksums "$LAST_SYNC_DIR" "$filepath" | awk '{print $1}')
+        local_hash=$(get_local_checksum "$filepath" | awk '{print $1}')
+        base_hash=$(get_base_checksum "$filepath" | awk '{print $1}')
         remote_hash=$(get_remote_checksum "$filepath" | awk '{print $1}')
         action=$(decide_action "$local_hash" "$base_hash" "$remote_hash")
 
