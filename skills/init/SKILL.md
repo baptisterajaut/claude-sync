@@ -17,11 +17,8 @@ You are setting up claude-sync for the first time on this machine. Follow these 
 
 Run: `claude-sync status 2>&1`
 
-If it succeeds (exit 0, outputs file status), claude-sync is already configured. Tell the user:
-
-> "claude-sync is already initialized on this machine. Run `claude-sync status` to see current state, or `claude-sync fix` to resolve conflicts."
-
-**Stop here** unless the user explicitly wants to re-initialize.
+- If it exits non-zero with "not configured" → this is expected for first-time setup, continue to step 1.
+- If it exits 0 and outputs file status → already configured. Tell the user and **stop here** unless they explicitly want to re-initialize.
 
 ## Step 1: Check prerequisites and PATH
 

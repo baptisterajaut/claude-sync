@@ -42,8 +42,7 @@ EOF
 
 load_config() {
     if [[ ! -f "$CONFIG_FILE" ]]; then
-        echo "error: config not found at $CONFIG_FILE" >&2
-        echo "Run /claude-sync:init to set up." >&2
+        echo "error: not configured (no config at $CONFIG_FILE)" >&2
         exit 1
     fi
     # shellcheck source=/dev/null
