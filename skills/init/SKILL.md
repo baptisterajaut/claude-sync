@@ -36,14 +36,15 @@ Check if `~/.config/claude-sync/config` exists. If it does, read it and confirm 
 
 If it doesn't exist:
 1. Ask the user for their SSH target (e.g. `user@server.example.com`)
-2. Ask for the remote path (suggest `~/claude-sync-backup` as default). Note: `~` is expanded using the local `$HOME` — if the remote user has a different home directory, use an absolute path instead.
-3. Create the config file:
+2. Ask for the remote path (suggest `claude-sync-backup` as default — relative to the remote user's home)
+3. Resolve the remote path to an absolute path by running: `ssh <HOST> "echo \$HOME"` and prepending it (e.g. if remote HOME is `/root` and path is `claude-sync-backup`, use `/root/claude-sync-backup`). Always store an absolute path in the config.
+4. Create the config file:
 
 ```bash
 mkdir -p ~/.config/claude-sync
 cat > ~/.config/claude-sync/config <<EOF
 REMOTE_HOST="<user-provided>"
-REMOTE_PATH="<user-provided>"
+REMOTE_PATH="<resolved-absolute-path>"
 CLAUDE_DIR="$HOME/.claude"
 EOF
 ```

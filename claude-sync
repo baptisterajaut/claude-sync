@@ -50,9 +50,9 @@ load_config() {
     source "$CONFIG_FILE"
     : "${REMOTE_PATH:?REMOTE_PATH not set in $CONFIG_FILE}"
     : "${CLAUDE_DIR:?CLAUDE_DIR not set in $CONFIG_FILE}"
-    # Expand ~ in paths (tilde isn't expanded when quoted in config files)
+    # Expand ~ in local paths (tilde isn't expanded when quoted in config files)
     CLAUDE_DIR="${CLAUDE_DIR/#\~/$HOME}"
-    REMOTE_PATH="${REMOTE_PATH/#\~/$HOME}"
+    # REMOTE_PATH should always be absolute (resolved by /claude-sync:init)
 }
 
 load_synclist() {
