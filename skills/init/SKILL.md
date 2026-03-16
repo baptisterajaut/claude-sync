@@ -1,10 +1,9 @@
 ---
-name: claude-sync-init
+name: init
 description: >
   First-time setup of claude-sync — configure SSH target, test connectivity,
   run initial sync with interactive conflict resolution, configure SessionStart hook.
   TRIGGER when: user wants to set up claude-sync on a new machine.
-user-invocable: true
 ---
 
 # /claude-sync-init — First-Time Setup

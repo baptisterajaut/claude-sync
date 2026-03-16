@@ -636,15 +636,11 @@ cmd_update() {
     echo "Pulling latest from $(git -C "$repo_dir" remote get-url origin)..."
     git -C "$repo_dir" pull
 
-    # Reinstall skills
-    for skill_dir in "$repo_dir"/skills/claude-sync-*/; do
-        [[ -d "$skill_dir" ]] || continue
-        local skill_name
-        skill_name=$(basename "$skill_dir")
-        rm -rf "$CLAUDE_DIR/skills/$skill_name"
-        cp -r "$skill_dir" "$CLAUDE_DIR/skills/$skill_name"
-    done
-    echo "Updated skills"
+    # Reinstall plugin
+    if command -v claude >/dev/null 2>&1; then
+        claude plugin install --plugin-dir "$repo_dir" --scope user 2>/dev/null || true
+    fi
+    echo "Updated plugin and skills"
 
     echo "Update complete (v$(bash "$repo_dir/claude-sync" --version | awk '{print $2}'))."
 }
@@ -655,23 +651,18 @@ cmd_install() {
     local repo_dir
     repo_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-    # 1. Install skills
-    local claude_dir="${CLAUDE_DIR:-$HOME/.claude}"
-    mkdir -p "$claude_dir/skills"
-    local skill_count=0
-    for skill_dir in "$repo_dir"/skills/claude-sync-*/; do
-        [[ -d "$skill_dir" ]] || continue
-        local skill_name
-        skill_name=$(basename "$skill_dir")
-        rm -rf "$claude_dir/skills/$skill_name"
-        cp -r "$skill_dir" "$claude_dir/skills/$skill_name"
-        (( skill_count++ )) || true
-    done
-    if (( skill_count > 0 )); then
-        echo "Installed $skill_count skills to $claude_dir/skills/"
-    else
-        echo "error: no skills/claude-sync-* directories found in $repo_dir" >&2
+    # 1. Install plugin (skills become /claude-sync:init, /claude-sync:fix, etc.)
+    if [[ ! -d "$repo_dir/.claude-plugin" ]]; then
+        echo "error: .claude-plugin/ not found in $repo_dir" >&2
         exit 1
+    fi
+    if command -v claude >/dev/null 2>&1; then
+        claude plugin install --plugin-dir "$repo_dir" --scope user 2>/dev/null && \
+            echo "Installed claude-sync plugin" || \
+            echo "warning: plugin install failed, skills may not be available" >&2
+    else
+        echo "warning: claude CLI not found, skipping plugin install" >&2
+        echo "Run 'claude plugin install --plugin-dir $repo_dir --scope user' manually." >&2
     fi
 
     # 2. Symlink script into PATH
@@ -701,7 +692,7 @@ cmd_install() {
     fi
 
     echo ""
-    echo "Done. Run /claude-sync-init in Claude Code to configure sync."
+    echo "Done. Run /claude-sync:init in Claude Code to configure sync."
 }
 
 # Allow sourcing for tests

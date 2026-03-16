@@ -1,10 +1,9 @@
 ---
-name: claude-sync-fix
+name: fix
 description: >
   Resolve claude-sync conflicts — shows semantic diffs of conflicting files
   and guides interactive merge resolution.
   TRIGGER when: claude-sync reports conflicts, or user asks to fix sync conflicts.
-user-invocable: true
 ---
 
 # /claude-sync-fix — Conflict Resolution

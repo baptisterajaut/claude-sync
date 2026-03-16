@@ -1,0 +1,12 @@
+{
+  "name": "claude-sync",
+  "description": "Sync Claude Code configuration across machines using rsync over SSH with three-way conflict detection",
+  "version": "0.1.0",
+  "author": {
+    "name": "Baptiste Rajaut",
+    "url": "https://github.com/baptisterajaut"
+  },
+  "repository": "https://github.com/baptisterajaut/claude-sync",
+  "license": "MIT",
+  "keywords": ["sync", "config", "rsync", "multi-machine"]
+}
