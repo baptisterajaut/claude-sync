@@ -62,6 +62,19 @@ load_synclist() {
     fi
 }
 
+# --- Notifications ---
+
+notify() {
+    local msg="$1"
+    if command -v notify-send >/dev/null 2>&1; then
+        notify-send "claude-sync" "$msg" || true
+    elif command -v osascript >/dev/null 2>&1; then
+        osascript -e "display notification \"$msg\" with title \"claude-sync\"" || true
+    elif command -v powershell.exe >/dev/null 2>&1; then
+        powershell.exe -Command "New-BurntToastNotification -Text 'claude-sync','$msg'" 2>/dev/null || true
+    fi
+}
+
 # --- Locking ---
 
 acquire_local_lock() {
@@ -732,7 +745,7 @@ cmd_sync() {
     # Report conflicts (from both normal sync and plugins merge)
     if [[ -n "$conflict_list" ]]; then
         echo "$conflict_list" | sed '/^$/d' | sed 's/^/CONFLICT: /' >&2
-        notify-send "claude-sync" "claude-sync: conflicts detected — run 'claude-sync fix'" 2>/dev/null || true
+        notify "claude-sync: conflicts detected — run 'claude-sync fix'" 2>/dev/null || true
         echo "Conflicts detected. Run 'claude-sync fix' to resolve." >&2
         return 1
     fi
