@@ -6,7 +6,7 @@ description: >
   TRIGGER when: claude-sync reports conflicts, or user asks to fix sync conflicts.
 ---
 
-# /claude-sync-fix — Conflict Resolution
+# /claude-sync:fix — Conflict Resolution
 
 You are resolving sync conflicts detected by claude-sync. Follow these steps.
 

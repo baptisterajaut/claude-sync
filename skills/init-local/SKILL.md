@@ -6,7 +6,7 @@ description: >
   TRIGGER when: user wants to create or update their local environment config.
 ---
 
-# /claude-sync-init-local — Generate Machine-Specific Config
+# /claude-sync:init-local — Generate Machine-Specific Config
 
 Generate `~/.claude/CLAUDE.local.md` by detecting the local environment. This file is never synced by claude-sync.
 

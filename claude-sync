@@ -282,7 +282,7 @@ cmd_status() {
 
     if $has_conflict; then
         echo ""
-        echo "Run /claude-sync:fix to resolve conflicts." >&2
+        echo "Run 'claude-sync fix' to resolve conflicts." >&2
     fi
 }
 
@@ -553,8 +553,8 @@ cmd_sync() {
     # Phase 7: Report conflicts
     if [[ -n "$conflict_list" ]]; then
         echo "$conflict_list" | sed '/^$/d' | sed 's/^/CONFLICT: /' >&2
-        notify-send "claude-sync" "Conflicts detected — run /claude-sync:fix" 2>/dev/null || true
-        echo "Conflicts detected. Run /claude-sync:fix to resolve." >&2
+        notify-send "claude-sync" "claude-sync: conflicts detected — run 'claude-sync fix'" 2>/dev/null || true
+        echo "Conflicts detected. Run 'claude-sync fix' to resolve." >&2
         return 1
     fi
 

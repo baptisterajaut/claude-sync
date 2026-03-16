@@ -6,7 +6,7 @@ description: >
   TRIGGER when: user wants to set up claude-sync on a new machine.
 ---
 
-# /claude-sync-init — First-Time Setup
+# /claude-sync:init — First-Time Setup
 
 You are setting up claude-sync for the first time on this machine. Follow these steps interactively.
 
@@ -18,7 +18,7 @@ Run: `claude-sync status 2>&1`
 
 If it succeeds (exit 0, outputs file status), claude-sync is already configured. Tell the user:
 
-> "claude-sync is already initialized on this machine. Run `claude-sync status` to see current state, or `/claude-sync-fix` to resolve conflicts."
+> "claude-sync is already initialized on this machine. Run `claude-sync status` to see current state, or `/claude-sync:fix` to resolve conflicts."
 
 **Stop here** unless the user explicitly wants to re-initialize.
 
@@ -103,4 +103,4 @@ If not present, add the SessionStart hook. Be careful to merge with existing hoo
 
 Run `claude-sync status` and show the user the result. Confirm everything is clean.
 
-Print: "claude-sync is configured. Your config will sync automatically at the start of each Claude session. Run `/claude-sync-init-local` to generate machine-specific CLAUDE.local.md."
+Print: "claude-sync is configured. Your config will sync automatically at the start of each Claude session. Run `/claude-sync:init-local` to generate machine-specific CLAUDE.local.md."
