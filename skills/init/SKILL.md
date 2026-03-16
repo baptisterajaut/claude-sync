@@ -107,19 +107,22 @@ Run: `claude-sync sync`
   3. Show the user both versions with a semantic explanation of the differences
   4. Propose a merged version (for CLAUDE.md, merge unique sections; for settings.json, merge JSON keys)
   5. Ask the user to approve the merge
-  6. Once approved, write the resolved version:
+  6. Once approved, write the resolved version **locally only**:
      ```bash
      cat > ~/.claude/<file> <<'EOF'
      <merged content>
      EOF
-     mkdir -p ~/.config/claude-sync/last-sync/$(dirname <file>)
-     cp ~/.claude/<file> ~/.config/claude-sync/last-sync/<file>
      ```
-  7. After resolving ALL conflicts, clean up and re-sync:
+  7. After resolving ALL conflicts locally, push them with resolve and clean up:
      ```bash
      rm -rf "$tmpdir"
+     claude-sync resolve
+     ```
+     This pushes local → remote and updates base only for files in conflict. Then verify:
+     ```bash
      claude-sync sync
      ```
+     Should report "Everything in sync."
 
 ## Step 6: Install missing plugins
 

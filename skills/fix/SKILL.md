@@ -63,27 +63,22 @@ cp ~/.config/claude-sync/last-sync/<file> "$backup_dir/<file>.base" 2>/dev/null 
 
 4. Ask the user to approve the merge. If they want changes, iterate.
 
-5. Once approved, write the resolved version locally:
+5. Once approved, write the resolved version **locally only**:
    ```bash
-   # Write to local
    cat > ~/.claude/<file> <<'EOF'
    <merged content>
    EOF
-   # Update base
-   mkdir -p ~/.config/claude-sync/last-sync/$(dirname <file>)
-   cp ~/.claude/<file> ~/.config/claude-sync/last-sync/<file>
    ```
 
-## Step 5: Push resolved files and verify
+## Step 5: Push resolved files
 
-After ALL conflicts are resolved locally, push everything to remote in ONE rsync call:
+After ALL conflicts are resolved locally, run `resolve` which pushes local → remote and updates base for all conflicting files:
 
 ```bash
-# Push all resolved files at once
-claude-sync sync
+claude-sync resolve
 ```
 
-If sync reports clean — done. If new conflicts appear (shouldn't happen), repeat from step 1.
+Then verify with `claude-sync sync` — should report "Everything in sync."
 
 ## Step 6: Cleanup
 

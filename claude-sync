@@ -31,6 +31,7 @@ Commands:
     update    Self-update from git repo
     init      First-time setup (install + launch Claude for config)
     fix       Launch Claude to resolve sync conflicts
+    resolve   Accept local version for conflicting files (local → remote + base)
 
 Options:
     -n, --dry-run   Preview actions without applying (sync)
@@ -646,6 +647,75 @@ cmd_diff() {
     done <<< "$changed_files"
 }
 
+# --- Resolve command ---
+
+# Accept local version as the resolved merge for conflicting files.
+# Pushes local → remote and updates base. Only for files currently in conflict.
+cmd_resolve() {
+    acquire_local_lock
+    local remote_checksums
+    if ! remote_checksums=$(remote_init); then
+        echo "error: could not connect to remote (locked or unreachable)" >&2
+        return 1
+    fi
+    REMOTE_CHECKSUMS_CACHE="$remote_checksums"
+    trap 'release_remote_lock; release_local_lock' EXIT
+
+    mkdir -p "$LAST_SYNC_DIR"
+    generate_plugins_list
+
+    local synclist all_files
+    synclist=$(load_synclist)
+    all_files=$(build_file_union "$synclist")
+
+    # Find files in conflict
+    local resolved_count=0
+    local tmpdir
+    tmpdir=$(mktemp -d)
+    local push_file="$tmpdir/push_list"
+    : > "$push_file"
+
+    while IFS= read -r filepath; do
+        [[ -z "$filepath" ]] && continue
+        local local_hash base_hash remote_hash action
+        local_hash=$(compute_local_checksums "$CLAUDE_DIR" "$filepath" | awk '{print $1}')
+        base_hash=$(compute_local_checksums "$LAST_SYNC_DIR" "$filepath" | awk '{print $1}')
+        remote_hash=$(get_remote_checksum "$filepath" | awk '{print $1}')
+        action=$(decide_action "$local_hash" "$base_hash" "$remote_hash")
+
+        if [[ "$action" == "conflict" ]]; then
+            echo "$filepath" >> "$push_file"
+            (( resolved_count++ )) || true
+        fi
+    done <<< "$all_files"
+
+    if (( resolved_count == 0 )); then
+        echo "No conflicts to resolve."
+        rm -rf "$tmpdir"
+        release_remote_lock
+        trap release_local_lock EXIT
+        return 0
+    fi
+
+    # Push local versions to remote
+    batch_push "$push_file"
+
+    # Verify + release lock
+    local verify_output
+    verify_output=$(remote_finalize "$push_file" "")
+    trap release_local_lock EXIT
+
+    # Update base from local
+    while IFS= read -r filepath; do
+        [[ -z "$filepath" ]] && continue
+        update_base_from_local "$filepath"
+        echo "resolved: $filepath (local → remote)"
+    done < "$push_file"
+
+    rm -rf "$tmpdir"
+    echo "Resolved $resolved_count conflict(s). Run 'claude-sync sync' to verify."
+}
+
 # --- Update command ---
 
 cmd_update() {
@@ -748,6 +818,7 @@ case "$COMMAND" in
     update)  load_config; cmd_update "$@" ;;
     init)    cmd_init "$@" ;;
     fix)     cmd_launch_skill "fix" ;;
+    resolve) load_config; cmd_resolve "$@" ;;
     "")      usage; exit 1 ;;
     *)      echo "error: unknown command '$COMMAND'" >&2; exit 1 ;;
 esac
