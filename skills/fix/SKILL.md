@@ -75,8 +75,10 @@ cp ~/.config/claude-sync/last-sync/<file> "$backup_dir/<file>.base" 2>/dev/null 
 After ALL conflicts are resolved locally, run `resolve` which pushes local → remote and updates base for all conflicting files:
 
 ```bash
-claude-sync resolve
+claude-sync resolve <file1> <file2> ...
 ```
+
+Pass the exact file paths that were resolved (relative to `~/.claude/`). Only those files will be pushed. Files not in conflict will error.
 
 Then verify with `claude-sync sync` — should report "Everything in sync."
 

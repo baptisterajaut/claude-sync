@@ -113,8 +113,9 @@ Run: `claude-sync sync`
   7. After resolving ALL conflicts locally, push them with resolve and clean up:
      ```bash
      rm -rf "$tmpdir"
-     claude-sync resolve
+     claude-sync resolve <file1> <file2> ...
      ```
+     Pass only the files you actually resolved.
      This pushes local → remote and updates base only for files in conflict. Then verify:
      ```bash
      claude-sync sync
