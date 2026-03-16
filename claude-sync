@@ -428,7 +428,7 @@ merge_plugins_list() {
 
     # No base = first sync — union
     if [[ -z "$base_list" ]]; then
-        { echo "$local_list"; echo "$remote_list"; } | sort -u > "$local_file"
+        { echo "$local_list"; echo "$remote_list"; } | grep -v '^$' | sort -u > "$local_file"
         echo "merged"
         return 0
     fi
@@ -441,11 +441,11 @@ merge_plugins_list() {
     removed_remotely=$(comm -23 <(echo "$base_list") <(echo "$remote_list"))
 
     local merged
-    merged=$({ echo "$base_list"; echo "$added_locally"; echo "$added_remotely"; } | sort -u)
+    merged=$({ echo "$base_list"; echo "$added_locally"; echo "$added_remotely"; } | grep -v '^$' | sort -u)
     [[ -n "$removed_locally" ]] && merged=$(comm -23 <(echo "$merged") <(echo "$removed_locally"))
     [[ -n "$removed_remotely" ]] && merged=$(comm -23 <(echo "$merged") <(echo "$removed_remotely"))
 
-    echo "$merged" > "$local_file"
+    echo "$merged" | grep -v '^$' > "$local_file"
     echo "merged"
     return 0
 }
