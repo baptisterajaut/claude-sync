@@ -15,11 +15,8 @@ Sync your Claude Code configuration across machines using rsync over SSH.
 # Clone
 git clone <repo-url> ~/claude-syncer
 
-# Add to PATH
-ln -s ~/claude-syncer/claude-sync ~/bin/claude-sync
-
-# Install skills
-cp -r ~/claude-syncer/skills/claude-sync ~/.claude/skills/
+# Install (symlinks script to ~/.local/bin, copies skills to ~/.claude/skills/)
+~/claude-syncer/claude-sync install
 
 # Init (run in Claude Code)
 # /claude-sync:init
@@ -33,6 +30,7 @@ cp -r ~/claude-syncer/skills/claude-sync ~/.claude/skills/
 | `claude-sync status` | Show per-file sync state |
 | `claude-sync diff` | Show diffs between local and remote |
 | `claude-sync update` | Self-update from git repo |
+| `claude-sync install` | Install skills + symlink script |
 
 Use `--dry-run` / `-n` with `sync` to preview without applying.
 

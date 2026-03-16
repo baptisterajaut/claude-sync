@@ -30,6 +30,7 @@ Commands:
     status    Show per-file sync status
     diff      Show diff between local and remote
     update    Self-update from git repo
+    install   Install skills and symlink script into PATH
 
 Options:
     -n, --dry-run   Preview actions without applying (sync)
@@ -651,6 +652,55 @@ cmd_update() {
     echo "Update complete (v$(bash "$REPO_DIR/claude-sync" --version | awk '{print $2}'))."
 }
 
+# --- Install command ---
+
+cmd_install() {
+    local repo_dir
+    repo_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+    # 1. Install skills
+    local claude_dir="${CLAUDE_DIR:-$HOME/.claude}"
+    local skills_dest="$claude_dir/skills/claude-sync"
+    if [[ -d "$repo_dir/skills/claude-sync" ]]; then
+        mkdir -p "$claude_dir/skills"
+        rm -rf "$skills_dest"
+        cp -r "$repo_dir/skills/claude-sync" "$skills_dest"
+        echo "Installed skills: $skills_dest"
+    else
+        echo "error: skills/claude-sync not found in $repo_dir" >&2
+        exit 1
+    fi
+
+    # 2. Symlink script into PATH
+    local target_dir="$HOME/.local/bin"
+    mkdir -p "$target_dir"
+    local target="$target_dir/claude-sync"
+    if [[ -L "$target" || -f "$target" ]]; then
+        local existing
+        existing=$(readlink -f "$target" 2>/dev/null || echo "$target")
+        if [[ "$existing" == "$repo_dir/claude-sync" ]]; then
+            echo "Script already linked: $target → $repo_dir/claude-sync"
+        else
+            echo "warning: $target already exists (pointing to $existing)" >&2
+            echo "Remove it first if you want to relink." >&2
+        fi
+    else
+        ln -s "$repo_dir/claude-sync" "$target"
+        echo "Linked script: $target → $repo_dir/claude-sync"
+    fi
+
+    # 3. Check PATH
+    if ! echo "$PATH" | tr ':' '\n' | grep -qx "$target_dir"; then
+        echo ""
+        echo "warning: $target_dir is not in your PATH" >&2
+        echo "Add this to your ~/.bashrc:" >&2
+        echo "  export PATH=\"\$HOME/.local/bin:\$PATH\"" >&2
+    fi
+
+    echo ""
+    echo "Done. Run /claude-sync:init in Claude Code to configure sync."
+}
+
 # Allow sourcing for tests
 if [[ "${1:-}" == "--source-only" ]]; then
     return 0 2>/dev/null || exit 0
@@ -673,7 +723,8 @@ case "$COMMAND" in
     sync)   load_config; cmd_sync "$@" ;;
     status) load_config; cmd_status "$@" ;;
     diff)   load_config; cmd_diff "$@" ;;
-    update) load_config; cmd_update "$@" ;;
-    "")     usage; exit 1 ;;
+    update)  load_config; cmd_update "$@" ;;
+    install) cmd_install "$@" ;;
+    "")      usage; exit 1 ;;
     *)      echo "error: unknown command '$COMMAND'" >&2; exit 1 ;;
 esac
