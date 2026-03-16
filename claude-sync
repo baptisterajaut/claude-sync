@@ -59,6 +59,36 @@ load_synclist() {
     fi
 }
 
+# --- Locking ---
+
+acquire_local_lock() {
+    if [[ -f "$LOCK_FILE" ]]; then
+        read -r existing_pid _ < "$LOCK_FILE"
+        if kill -0 "$existing_pid" 2>/dev/null; then
+            echo "error: claude-sync already running (PID $existing_pid)" >&2
+            return 1
+        fi
+        echo "warning: reclaiming stale lock from PID $existing_pid" >&2
+        rm -f "$LOCK_FILE"
+    fi
+    echo "$$ $(date +%s)" > "$LOCK_FILE"
+    trap release_local_lock EXIT
+}
+
+release_local_lock() {
+    rm -f "$LOCK_FILE"
+}
+
+# Remote lock is handled by remote_init() and remote_finalize().
+# release_remote_lock() is only for error cleanup paths.
+release_remote_lock() {
+    if [[ -z "${REMOTE_HOST:-}" ]]; then
+        rm -f "$REMOTE_PATH/.claude-sync.lock"
+    else
+        ssh "$REMOTE_HOST" "rm -f \"$REMOTE_PATH/.claude-sync.lock\""
+    fi
+}
+
 # Allow sourcing for tests
 if [[ "${1:-}" == "--source-only" ]]; then
     return 0 2>/dev/null || exit 0
