@@ -281,6 +281,47 @@ cmd_status() {
         [[ "$action" == "conflict" ]] && has_conflict=true
     done <<< "$all_files"
 
+    # Check plugins.list status (not in synclist, managed separately)
+    generate_plugins_list
+    local local_plugins="" remote_plugins="" base_plugins=""
+    [[ -f "$CLAUDE_DIR/plugins.list" ]] && local_plugins=$(sort -u "$CLAUDE_DIR/plugins.list")
+    [[ -f "$LAST_SYNC_DIR/plugins.list" ]] && base_plugins=$(sort -u "$LAST_SYNC_DIR/plugins.list")
+    # Get remote plugins.list checksum from cache
+    local remote_pl_hash
+    remote_pl_hash=$(get_remote_checksum "plugins.list" | awk '{print $1}')
+    if [[ "$remote_pl_hash" != "ABSENT" ]]; then
+        # Fetch the file content for comparison
+        if [[ -z "${REMOTE_HOST:-}" ]]; then
+            [[ -f "$REMOTE_PATH/plugins.list" ]] && remote_plugins=$(sort -u "$REMOTE_PATH/plugins.list")
+        else
+            remote_plugins=$(ssh "$REMOTE_HOST" "sort -u \"$REMOTE_PATH/plugins.list\" 2>/dev/null" || true)
+        fi
+    fi
+
+    if [[ -n "$local_plugins" || -n "$remote_plugins" ]]; then
+        if [[ "$local_plugins" == "$remote_plugins" ]]; then
+            printf "%-15s %s\n" "clean" "plugins.list"
+        elif [[ -z "$remote_plugins" ]]; then
+            printf "%-15s %s\n" "new-local" "plugins.list"
+        elif [[ -z "$local_plugins" ]]; then
+            printf "%-15s %s\n" "new-remote" "plugins.list"
+        else
+            # Check if remote removed something
+            if [[ -n "$base_plugins" ]]; then
+                local removed
+                removed=$(comm -23 <(echo "$base_plugins") <(echo "$remote_plugins") | comm -12 - <(echo "$local_plugins"))
+                if [[ -n "$removed" ]]; then
+                    printf "%-15s %s\n" "CONFLICT" "plugins.list"
+                    has_conflict=true
+                else
+                    printf "%-15s %s\n" "mergeable" "plugins.list"
+                fi
+            else
+                printf "%-15s %s\n" "mergeable" "plugins.list"
+            fi
+        fi
+    fi
+
     if $has_conflict; then
         echo ""
         echo "Run 'claude-sync fix' to resolve conflicts." >&2
