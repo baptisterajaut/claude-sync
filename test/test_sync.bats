@@ -204,23 +204,128 @@ settings.json" > "$CONFIG_DIR/synclist"
     [[ "$output" == *"not in conflict"* ]]
 }
 
-@test "sync: plugins.list auto-merges union of both sides" {
+# --- plugins.list merge tests (from the truth table) ---
+
+@test "plugins: first sync, no base — union of both sides" {
     export CLAUDE_SYNC_CONFIG_DIR="$CONFIG_DIR"
     echo "CLAUDE.md" > "$CONFIG_DIR/synclist"
     echo "same" > "$LOCAL_DIR/CLAUDE.md"
     echo "same" > "$REMOTE_DIR/CLAUDE.md"
     echo "same" > "$BASE_DIR/CLAUDE.md"
-    # Local has plugin A, remote has plugin B, base has neither
     printf "pluginA@market\n" > "$LOCAL_DIR/plugins.list"
     printf "pluginB@market\n" > "$REMOTE_DIR/plugins.list"
     run bash ./claude-sync sync
     [ "$status" -eq 0 ]
-    # Local should have both
     grep -q "pluginA@market" "$LOCAL_DIR/plugins.list"
     grep -q "pluginB@market" "$LOCAL_DIR/plugins.list"
-    # Remote should have both
     grep -q "pluginA@market" "$REMOTE_DIR/plugins.list"
     grep -q "pluginB@market" "$REMOTE_DIR/plugins.list"
+}
+
+@test "plugins: installed locally — pushes new plugin" {
+    export CLAUDE_SYNC_CONFIG_DIR="$CONFIG_DIR"
+    echo "CLAUDE.md" > "$CONFIG_DIR/synclist"
+    echo "same" > "$LOCAL_DIR/CLAUDE.md"
+    echo "same" > "$REMOTE_DIR/CLAUDE.md"
+    echo "same" > "$BASE_DIR/CLAUDE.md"
+    printf "pluginA@market\npluginB@market\n" > "$BASE_DIR/plugins.list"
+    printf "pluginA@market\npluginB@market\npluginC@market\n" > "$LOCAL_DIR/plugins.list"
+    printf "pluginA@market\npluginB@market\n" > "$REMOTE_DIR/plugins.list"
+    run bash ./claude-sync sync
+    [ "$status" -eq 0 ]
+    grep -q "pluginC@market" "$REMOTE_DIR/plugins.list"
+}
+
+@test "plugins: installed remotely — pulls new plugin" {
+    export CLAUDE_SYNC_CONFIG_DIR="$CONFIG_DIR"
+    echo "CLAUDE.md" > "$CONFIG_DIR/synclist"
+    echo "same" > "$LOCAL_DIR/CLAUDE.md"
+    echo "same" > "$REMOTE_DIR/CLAUDE.md"
+    echo "same" > "$BASE_DIR/CLAUDE.md"
+    printf "pluginA@market\npluginB@market\n" > "$BASE_DIR/plugins.list"
+    printf "pluginA@market\npluginB@market\n" > "$LOCAL_DIR/plugins.list"
+    printf "pluginA@market\npluginB@market\npluginC@market\n" > "$REMOTE_DIR/plugins.list"
+    run bash ./claude-sync sync
+    [ "$status" -eq 0 ]
+    grep -q "pluginC@market" "$LOCAL_DIR/plugins.list"
+}
+
+@test "plugins: installed on both sides — union" {
+    export CLAUDE_SYNC_CONFIG_DIR="$CONFIG_DIR"
+    echo "CLAUDE.md" > "$CONFIG_DIR/synclist"
+    echo "same" > "$LOCAL_DIR/CLAUDE.md"
+    echo "same" > "$REMOTE_DIR/CLAUDE.md"
+    echo "same" > "$BASE_DIR/CLAUDE.md"
+    printf "pluginA@market\n" > "$BASE_DIR/plugins.list"
+    printf "pluginA@market\npluginC@market\n" > "$LOCAL_DIR/plugins.list"
+    printf "pluginA@market\npluginD@market\n" > "$REMOTE_DIR/plugins.list"
+    run bash ./claude-sync sync
+    [ "$status" -eq 0 ]
+    grep -q "pluginC@market" "$LOCAL_DIR/plugins.list"
+    grep -q "pluginD@market" "$LOCAL_DIR/plugins.list"
+    grep -q "pluginC@market" "$REMOTE_DIR/plugins.list"
+    grep -q "pluginD@market" "$REMOTE_DIR/plugins.list"
+}
+
+@test "plugins: removed locally — propagates removal" {
+    export CLAUDE_SYNC_CONFIG_DIR="$CONFIG_DIR"
+    echo "CLAUDE.md" > "$CONFIG_DIR/synclist"
+    echo "same" > "$LOCAL_DIR/CLAUDE.md"
+    echo "same" > "$REMOTE_DIR/CLAUDE.md"
+    echo "same" > "$BASE_DIR/CLAUDE.md"
+    printf "pluginA@market\npluginB@market\n" > "$BASE_DIR/plugins.list"
+    printf "pluginA@market\n" > "$LOCAL_DIR/plugins.list"
+    printf "pluginA@market\npluginB@market\n" > "$REMOTE_DIR/plugins.list"
+    run bash ./claude-sync sync
+    [ "$status" -eq 0 ]
+    ! grep -q "pluginB@market" "$LOCAL_DIR/plugins.list"
+    ! grep -q "pluginB@market" "$REMOTE_DIR/plugins.list"
+}
+
+@test "plugins: removed remotely — propagates removal" {
+    export CLAUDE_SYNC_CONFIG_DIR="$CONFIG_DIR"
+    echo "CLAUDE.md" > "$CONFIG_DIR/synclist"
+    echo "same" > "$LOCAL_DIR/CLAUDE.md"
+    echo "same" > "$REMOTE_DIR/CLAUDE.md"
+    echo "same" > "$BASE_DIR/CLAUDE.md"
+    printf "pluginA@market\npluginB@market\n" > "$BASE_DIR/plugins.list"
+    printf "pluginA@market\npluginB@market\n" > "$LOCAL_DIR/plugins.list"
+    printf "pluginA@market\n" > "$REMOTE_DIR/plugins.list"
+    run bash ./claude-sync sync
+    [ "$status" -eq 0 ]
+    ! grep -q "pluginB@market" "$LOCAL_DIR/plugins.list"
+}
+
+@test "plugins: removed locally + installed remotely — both applied" {
+    export CLAUDE_SYNC_CONFIG_DIR="$CONFIG_DIR"
+    echo "CLAUDE.md" > "$CONFIG_DIR/synclist"
+    echo "same" > "$LOCAL_DIR/CLAUDE.md"
+    echo "same" > "$REMOTE_DIR/CLAUDE.md"
+    echo "same" > "$BASE_DIR/CLAUDE.md"
+    printf "pluginA@market\npluginB@market\n" > "$BASE_DIR/plugins.list"
+    printf "pluginA@market\n" > "$LOCAL_DIR/plugins.list"
+    printf "pluginA@market\npluginB@market\npluginC@market\n" > "$REMOTE_DIR/plugins.list"
+    run bash ./claude-sync sync
+    [ "$status" -eq 0 ]
+    # B removed (local decision), C added (remote decision)
+    ! grep -q "pluginB@market" "$LOCAL_DIR/plugins.list"
+    grep -q "pluginC@market" "$LOCAL_DIR/plugins.list"
+    ! grep -q "pluginB@market" "$REMOTE_DIR/plugins.list"
+    grep -q "pluginC@market" "$REMOTE_DIR/plugins.list"
+}
+
+@test "plugins: removed on both sides — removed" {
+    export CLAUDE_SYNC_CONFIG_DIR="$CONFIG_DIR"
+    echo "CLAUDE.md" > "$CONFIG_DIR/synclist"
+    echo "same" > "$LOCAL_DIR/CLAUDE.md"
+    echo "same" > "$REMOTE_DIR/CLAUDE.md"
+    echo "same" > "$BASE_DIR/CLAUDE.md"
+    printf "pluginA@market\npluginB@market\n" > "$BASE_DIR/plugins.list"
+    printf "pluginA@market\n" > "$LOCAL_DIR/plugins.list"
+    printf "pluginA@market\n" > "$REMOTE_DIR/plugins.list"
+    run bash ./claude-sync sync
+    [ "$status" -eq 0 ]
+    ! grep -q "pluginB@market" "$LOCAL_DIR/plugins.list"
 }
 
 @test "sync: plugins.list pushes local when remote empty" {

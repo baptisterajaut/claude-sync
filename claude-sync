@@ -324,19 +324,7 @@ cmd_status() {
         elif [[ -z "$local_plugins" ]]; then
             printf "%-15s %s\n" "new-remote" "plugins.list"
         else
-            # Check if remote removed something
-            if [[ -n "$base_plugins" ]]; then
-                local removed
-                removed=$(comm -23 <(echo "$base_plugins") <(echo "$remote_plugins") | comm -12 - <(echo "$local_plugins"))
-                if [[ -n "$removed" ]]; then
-                    printf "%-15s %s\n" "CONFLICT" "plugins.list"
-                    has_conflict=true
-                else
-                    printf "%-15s %s\n" "mergeable" "plugins.list"
-                fi
-            else
-                printf "%-15s %s\n" "mergeable" "plugins.list"
-            fi
+            printf "%-15s %s\n" "mergeable" "plugins.list"
         fi
     fi
 
@@ -407,8 +395,9 @@ remove_from_base() {
 
 # --- Plugin list generation ---
 
-# Generate plugins.list from installed_plugins.json before syncing.
-# This creates a simple "name@marketplace" list that is machine-independent.
+# Generate plugins.list from locally installed plugins.
+# Full dump — installing or removing a plugin changes this file.
+# merge_plugins_list handles the three-way merge automatically (no conflicts).
 generate_plugins_list() {
     local installed="$CLAUDE_DIR/plugins/installed_plugins.json"
     local plugins_list="$CLAUDE_DIR/plugins.list"
@@ -417,44 +406,48 @@ generate_plugins_list() {
     fi
 }
 
-# Merge plugins.list: union if both sides only added, conflict if remote removed something.
-# Returns: "clean", "merged", or "conflict"
+# Merge plugins.list: always auto-merge, never conflicts.
+# Plugins are binary (installed/not) — apply all additions and removals from both sides.
+# Returns: "clean" or "merged"
 merge_plugins_list() {
     local local_file="$CLAUDE_DIR/plugins.list"
     local base_file="$LAST_SYNC_DIR/plugins.list"
-    local remote_file="$1"  # path to remote plugins.list (from tmpdir or REMOTE_PATH)
+    local remote_file="$1"
 
-    # If neither exists, nothing to do
-    [[ ! -f "$local_file" && ! -f "$remote_file" ]] && echo "clean" && return
+    [[ ! -f "$local_file" && ! -f "$remote_file" ]] && { echo "clean"; return 0; }
 
     local local_list="" base_list="" remote_list=""
     [[ -f "$local_file" ]] && local_list=$(sort -u "$local_file")
     [[ -f "$base_file" ]] && base_list=$(sort -u "$base_file")
     [[ -f "$remote_file" ]] && remote_list=$(sort -u "$remote_file")
 
-    # If identical, clean
     if [[ "$local_list" == "$remote_list" ]]; then
         echo "clean"
-        return
+        return 0
     fi
 
-    # Check if remote removed plugins that local still has
-    if [[ -n "$base_list" && -n "$remote_list" ]]; then
-        local removed_from_remote
-        removed_from_remote=$(comm -23 <(echo "$base_list") <(echo "$remote_list"))
-        local still_in_local
-        still_in_local=$(comm -12 <(echo "$removed_from_remote") <(echo "$local_list"))
-        if [[ -n "$still_in_local" ]]; then
-            echo "conflict"
-            echo "Remote removed plugins still present locally:" >&2
-            echo "$still_in_local" | sed 's/^/  /' >&2
-            return
-        fi
+    # No base = first sync — union
+    if [[ -z "$base_list" ]]; then
+        { echo "$local_list"; echo "$remote_list"; } | sort -u > "$local_file"
+        echo "merged"
+        return 0
     fi
 
-    # Safe to merge: union of both
-    { echo "$local_list"; echo "$remote_list"; } | sort -u > "$local_file"
+    # Three-way: base + additions - removals from both sides
+    local added_locally added_remotely removed_locally removed_remotely
+    added_locally=$(comm -23 <(echo "$local_list") <(echo "$base_list"))
+    added_remotely=$(comm -23 <(echo "$remote_list") <(echo "$base_list"))
+    removed_locally=$(comm -23 <(echo "$base_list") <(echo "$local_list"))
+    removed_remotely=$(comm -23 <(echo "$base_list") <(echo "$remote_list"))
+
+    local merged
+    merged=$({ echo "$base_list"; echo "$added_locally"; echo "$added_remotely"; } | sort -u)
+    [[ -n "$removed_locally" ]] && merged=$(comm -23 <(echo "$merged") <(echo "$removed_locally"))
+    [[ -n "$removed_remotely" ]] && merged=$(comm -23 <(echo "$merged") <(echo "$removed_remotely"))
+
+    echo "$merged" > "$local_file"
     echo "merged"
+    return 0
 }
 
 # --- Backups ---
@@ -713,10 +706,7 @@ cmd_sync() {
                     echo "[dry-run] plugins.list: would merge"
                 fi
                 ;;
-            conflict)
-                echo "CONFLICT: plugins.list (remote removed plugins still present locally)" >&2
-                conflict_list+="plugins.list"$'\n'
-                ;;
+            # No conflict case — plugins.list always auto-merges
         esac
     elif [[ -f "$CLAUDE_DIR/plugins.list" ]]; then
         # Only local exists — push to remote
