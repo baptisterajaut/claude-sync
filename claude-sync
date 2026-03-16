@@ -843,6 +843,27 @@ cmd_resolve() {
         fi
     done <<< "$all_files"
 
+    # Also handle plugins.list (not in synclist but resolvable)
+    if [[ -f "$CLAUDE_DIR/plugins.list" ]]; then
+        local should_resolve_plugins=false
+        if (( ${#requested_files[@]} == 0 )); then
+            should_resolve_plugins=true
+        else
+            for req in "${requested_files[@]}"; do
+                [[ "$req" == "plugins.list" ]] && should_resolve_plugins=true && break
+            done
+        fi
+        if $should_resolve_plugins; then
+            local local_pl_hash remote_pl_hash
+            local_pl_hash=$(md5sum "$CLAUDE_DIR/plugins.list" | awk '{print $1}')
+            remote_pl_hash=$(get_remote_checksum "plugins.list" | awk '{print $1}')
+            if [[ "$local_pl_hash" != "$remote_pl_hash" ]]; then
+                echo "plugins.list" >> "$push_file"
+                (( resolved_count++ )) || true
+            fi
+        fi
+    fi
+
     if (( resolved_count == 0 )); then
         if (( ${#requested_files[@]} > 0 )); then
             echo "error: specified files are not in conflict" >&2
