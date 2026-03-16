@@ -284,6 +284,338 @@ cmd_status() {
     fi
 }
 
+# --- Batch file transfers ---
+
+batch_push() {
+    local files_from="$1"
+    if [[ -z "${REMOTE_HOST:-}" ]]; then
+        while IFS= read -r f; do
+            [[ -z "$f" ]] && continue
+            mkdir -p "$(dirname "$REMOTE_PATH/$f")"
+            cp "$CLAUDE_DIR/$f" "$REMOTE_PATH/$f"
+        done < "$files_from"
+    else
+        rsync -a --files-from="$files_from" "$CLAUDE_DIR/" "$REMOTE_HOST:$REMOTE_PATH/"
+    fi
+}
+
+batch_pull() {
+    local files_from="$1"
+    if [[ -z "${REMOTE_HOST:-}" ]]; then
+        while IFS= read -r f; do
+            [[ -z "$f" ]] && continue
+            mkdir -p "$(dirname "$CLAUDE_DIR/$f")"
+            cp "$REMOTE_PATH/$f" "$CLAUDE_DIR/$f"
+        done < "$files_from"
+    else
+        rsync -a --files-from="$files_from" "$REMOTE_HOST:$REMOTE_PATH/" "$CLAUDE_DIR/"
+    fi
+}
+
+batch_delete_remote() {
+    local files="$1"
+    if [[ -z "${REMOTE_HOST:-}" ]]; then
+        while IFS= read -r f; do
+            [[ -z "$f" ]] && continue
+            rm -f "$REMOTE_PATH/$f"
+        done <<< "$files"
+    else
+        :  # handled by remote_finalize in SSH mode
+    fi
+}
+
+batch_delete_local() {
+    local files="$1"
+    while IFS= read -r f; do
+        [[ -z "$f" ]] && continue
+        rm -f "$CLAUDE_DIR/$f"
+    done <<< "$files"
+}
+
+update_base_from_local() {
+    local filepath="$1"
+    mkdir -p "$(dirname "$LAST_SYNC_DIR/$filepath")"
+    cp "$CLAUDE_DIR/$filepath" "$LAST_SYNC_DIR/$filepath"
+}
+
+remove_from_base() {
+    local filepath="$1"
+    rm -f "$LAST_SYNC_DIR/$filepath"
+}
+
+# --- Backups ---
+
+create_local_backup() {
+    mkdir -p "$BACKUP_DIR"
+    local synclist
+    synclist=$(load_synclist)
+    local files
+    files=$(enumerate_files "$CLAUDE_DIR" "$synclist")
+    if [[ -n "$files" ]]; then
+        local backup_file="$BACKUP_DIR/$(date -Iseconds).tar.gz"
+        tar -czf "$backup_file" -C "$CLAUDE_DIR" $files 2>/dev/null || true
+    fi
+}
+
+prune_old_backups() {
+    if [[ -d "$BACKUP_DIR" ]]; then
+        find "$BACKUP_DIR" -maxdepth 1 -name "*.tar.gz" -mtime +30 -delete 2>/dev/null || true
+    fi
+}
+
+# --- Remote combined operations ---
+
+remote_init() {
+    if [[ -z "${REMOTE_HOST:-}" ]]; then
+        mkdir -p "$REMOTE_PATH"
+        ( cd "$REMOTE_PATH" && find . -type f -not -name ".claude-sync.lock" -exec md5sum {} + 2>/dev/null | sed 's| \./| |' ) || true
+    else
+        ssh "$REMOTE_HOST" '
+            set -e
+            set -C
+            echo "'"'$HOSTNAME'"'" > "'"$REMOTE_PATH"'/.claude-sync.lock" 2>/dev/null || {
+                age=$(( $(date +%s) - $(stat -c %Y "'"$REMOTE_PATH"'/.claude-sync.lock" 2>/dev/null || echo 0) ))
+                if [ "$age" -gt 300 ]; then
+                    rm -f "'"$REMOTE_PATH"'/.claude-sync.lock"
+                    echo "'"'$HOSTNAME'"'" > "'"$REMOTE_PATH"'/.claude-sync.lock"
+                else
+                    echo "LOCKED_BY $(cat "'"$REMOTE_PATH"'/.claude-sync.lock" 2>/dev/null)" >&2
+                    exit 1
+                fi
+            }
+            set +C
+            mkdir -p "'"$REMOTE_PATH"'"
+            cd "'"$REMOTE_PATH"'" && find . -type f -not -name ".claude-sync.lock" -exec md5sum {} + 2>/dev/null | sed "s| \./| |"
+        '
+    fi
+}
+
+remote_finalize() {
+    local verify_file="$1"
+    local delete_files="$2"
+    if [[ -z "${REMOTE_HOST:-}" ]]; then
+        if [[ -s "$verify_file" ]]; then
+            while IFS= read -r f; do
+                [[ -z "$f" ]] && continue
+                md5sum "$REMOTE_PATH/$f" | sed "s|$REMOTE_PATH/||"
+            done < "$verify_file"
+        fi
+        while IFS= read -r f; do
+            [[ -z "$f" ]] && continue
+            rm -f "$REMOTE_PATH/$f"
+        done <<< "$delete_files"
+        rm -f "$REMOTE_PATH/.claude-sync.lock"
+    else
+        local script='cd "'"$REMOTE_PATH"'"; '
+        if [[ -s "$verify_file" ]]; then
+            while IFS= read -r f; do
+                [[ -z "$f" ]] && continue
+                script+="md5sum \"$f\"; "
+            done < "$verify_file"
+        fi
+        while IFS= read -r f; do
+            [[ -z "$f" ]] && continue
+            script+="rm -f \"$f\"; "
+        done <<< "$delete_files"
+        script+='rm -f .claude-sync.lock'
+        ssh "$REMOTE_HOST" "$script"
+    fi
+}
+
+# --- Sync command ---
+
+cmd_sync() {
+    acquire_local_lock
+
+    # Phase 1: remote_init (lock + bootstrap + checksums)
+    local remote_checksums
+    if ! remote_checksums=$(remote_init); then
+        echo "error: could not connect to remote (locked or unreachable)" >&2
+        return 1
+    fi
+    REMOTE_CHECKSUMS_CACHE="$remote_checksums"
+    trap 'release_remote_lock; release_local_lock' EXIT
+
+    mkdir -p "$LAST_SYNC_DIR"
+    local synclist all_files
+    synclist=$(load_synclist)
+    all_files=$(build_file_union "$synclist")
+
+    if [[ -z "$all_files" ]]; then
+        echo "No files to sync."
+        release_remote_lock; trap release_local_lock EXIT
+        return 0
+    fi
+
+    # Phase 2: Decide actions — build lists
+    local push_list="" pull_list="" delete_remote_list="" delete_local_list=""
+    local base_update_list="" base_remove_list="" conflict_list=""
+    local tmpdir
+    tmpdir=$(mktemp -d)
+
+    while IFS= read -r filepath; do
+        [[ -z "$filepath" ]] && continue
+        local local_hash base_hash remote_hash action
+        local_hash=$(compute_local_checksums "$CLAUDE_DIR" "$filepath" | awk '{print $1}')
+        base_hash=$(compute_local_checksums "$LAST_SYNC_DIR" "$filepath" | awk '{print $1}')
+        remote_hash=$(get_remote_checksum "$filepath" | awk '{print $1}')
+        action=$(decide_action "$local_hash" "$base_hash" "$remote_hash")
+
+        case "$action" in
+            clean) ;;
+            push|push-new) push_list+="$filepath"$'\n'; base_update_list+="$filepath"$'\n' ;;
+            pull|pull-new) pull_list+="$filepath"$'\n'; base_update_list+="$filepath"$'\n' ;;
+            update-base|create-base) base_update_list+="$filepath"$'\n' ;;
+            delete-remote) delete_remote_list+="$filepath"$'\n'; base_remove_list+="$filepath"$'\n' ;;
+            delete-local) delete_local_list+="$filepath"$'\n'; base_remove_list+="$filepath"$'\n' ;;
+            delete-base) base_remove_list+="$filepath"$'\n' ;;
+            conflict) conflict_list+="$filepath"$'\n' ;;
+        esac
+    done <<< "$all_files"
+
+    # Dry run: just print and exit
+    if $DRY_RUN; then
+        [[ -n "$push_list" ]] && echo "$push_list" | sed '/^$/d' | sed 's/^/[dry-run] push: /'
+        [[ -n "$pull_list" ]] && echo "$pull_list" | sed '/^$/d' | sed 's/^/[dry-run] pull: /'
+        [[ -n "$delete_remote_list" ]] && echo "$delete_remote_list" | sed '/^$/d' | sed 's/^/[dry-run] delete remote: /'
+        [[ -n "$delete_local_list" ]] && echo "$delete_local_list" | sed '/^$/d' | sed 's/^/[dry-run] delete local: /'
+        [[ -n "$conflict_list" ]] && echo "$conflict_list" | sed '/^$/d' | sed 's/^/CONFLICT: /' >&2
+        release_remote_lock; trap release_local_lock EXIT; rm -rf "$tmpdir"
+        [[ -n "$conflict_list" ]] && return 1
+        [[ -z "$push_list$pull_list$delete_remote_list$delete_local_list" ]] && echo "Everything in sync."
+        return 0
+    fi
+
+    # Phase 3: Backup before local modifications
+    if [[ -n "$pull_list" || -n "$delete_local_list" ]]; then
+        create_local_backup
+    fi
+
+    # Phase 4: Batch transfers
+    if [[ -n "$push_list" ]]; then
+        local push_file="$tmpdir/push_list"
+        echo "$push_list" | sed '/^$/d' > "$push_file"
+        batch_push "$push_file"
+        echo "$push_list" | sed '/^$/d' | sed 's/^/pushed: /'
+    fi
+    if [[ -n "$pull_list" ]]; then
+        local pull_file="$tmpdir/pull_list"
+        echo "$pull_list" | sed '/^$/d' > "$pull_file"
+        batch_pull "$pull_file"
+        echo "$pull_list" | sed '/^$/d' | sed 's/^/pulled: /'
+    fi
+    if [[ -n "$delete_local_list" ]]; then
+        batch_delete_local "$delete_local_list"
+        echo "$delete_local_list" | sed '/^$/d' | sed 's/^/deleted local: /'
+    fi
+
+    # Phase 5: Verify + remote deletes + release lock
+    local verify_file="$tmpdir/verify_list"
+    echo "$push_list" | sed '/^$/d' > "$verify_file"
+    local verify_output
+    verify_output=$(remote_finalize "$verify_file" "$delete_remote_list")
+    trap release_local_lock EXIT
+
+    if [[ -n "$delete_remote_list" ]]; then
+        echo "$delete_remote_list" | sed '/^$/d' | sed 's/^/deleted remote: /'
+    fi
+
+    # Verify push checksums
+    if [[ -n "$push_list" ]]; then
+        while IFS= read -r filepath; do
+            [[ -z "$filepath" ]] && continue
+            local expected actual
+            expected=$(md5sum "$CLAUDE_DIR/$filepath" | awk '{print $1}')
+            actual=$(echo "$verify_output" | grep -F "$filepath" | awk '{print $1}')
+            if [[ "$expected" != "$actual" ]]; then
+                echo "error: integrity check failed for $filepath (push)" >&2
+            fi
+        done <<< "$push_list"
+    fi
+
+    # Phase 6: Update base
+    while IFS= read -r filepath; do
+        [[ -z "$filepath" ]] && continue
+        update_base_from_local "$filepath"
+    done <<< "$base_update_list"
+    while IFS= read -r filepath; do
+        [[ -z "$filepath" ]] && continue
+        remove_from_base "$filepath"
+    done <<< "$base_remove_list"
+
+    rm -rf "$tmpdir"
+    prune_old_backups
+
+    # Phase 7: Report conflicts
+    if [[ -n "$conflict_list" ]]; then
+        echo "$conflict_list" | sed '/^$/d' | sed 's/^/CONFLICT: /' >&2
+        notify-send "claude-sync" "Conflicts detected — run /claude-sync:fix" 2>/dev/null || true
+        echo "Conflicts detected. Run /claude-sync:fix to resolve." >&2
+        return 1
+    fi
+
+    if [[ -z "$push_list$pull_list$delete_remote_list$delete_local_list" ]]; then
+        echo "Everything in sync."
+    fi
+}
+
+# --- Diff command ---
+
+cmd_diff() {
+    fetch_remote_checksums_readonly
+    local synclist all_files
+    synclist=$(load_synclist)
+    all_files=$(build_file_union "$synclist")
+
+    if [[ -z "$all_files" ]]; then
+        echo "No files to compare."
+        return 0
+    fi
+
+    local changed_files=""
+    declare -A file_actions
+    while IFS= read -r filepath; do
+        [[ -z "$filepath" ]] && continue
+        local local_hash base_hash remote_hash action
+        local_hash=$(compute_local_checksums "$CLAUDE_DIR" "$filepath" | awk '{print $1}')
+        base_hash=$(compute_local_checksums "$LAST_SYNC_DIR" "$filepath" | awk '{print $1}')
+        remote_hash=$(get_remote_checksum "$filepath" | awk '{print $1}')
+        action=$(decide_action "$local_hash" "$base_hash" "$remote_hash")
+        if [[ "$action" != "clean" ]]; then
+            changed_files+="$filepath"$'\n'
+            file_actions["$filepath"]="$action"
+        fi
+    done <<< "$all_files"
+
+    if [[ -z "$changed_files" ]]; then
+        echo "No differences found."
+        return 0
+    fi
+
+    while IFS= read -r filepath; do
+        [[ -z "$filepath" ]] && continue
+        local action="${file_actions[$filepath]}"
+        local local_file="$CLAUDE_DIR/$filepath"
+        local remote_file="$REMOTE_PATH/$filepath"  # local-only mode
+
+        local local_hash remote_hash
+        local_hash=$(compute_local_checksums "$CLAUDE_DIR" "$filepath" | awk '{print $1}')
+        remote_hash=$(get_remote_checksum "$filepath" | awk '{print $1}')
+
+        echo "=== $filepath ($action) ==="
+        if [[ "$local_hash" == "ABSENT" ]]; then
+            echo "(local: absent, remote: exists)"
+            cat "$remote_file" 2>/dev/null || true
+        elif [[ "$remote_hash" == "ABSENT" ]]; then
+            echo "(local: exists, remote: absent)"
+            cat "$local_file"
+        else
+            diff -u --label "local/$filepath" "$local_file" --label "remote/$filepath" "$remote_file" || true
+        fi
+        echo ""
+    done <<< "$changed_files"
+}
+
 # Allow sourcing for tests
 if [[ "${1:-}" == "--source-only" ]]; then
     return 0 2>/dev/null || exit 0

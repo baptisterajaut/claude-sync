@@ -7,7 +7,8 @@ setup_test_env() {
     export REMOTE_DIR="$TEST_DIR/remote"
     export CONFIG_DIR="$TEST_DIR/config"
     export BASE_DIR="$CONFIG_DIR/last-sync"
-    mkdir -p "$LOCAL_DIR" "$BASE_DIR" "$REMOTE_DIR" "$CONFIG_DIR"
+    export BACKUP_DIR="$CONFIG_DIR/backups"
+    mkdir -p "$LOCAL_DIR" "$BASE_DIR" "$REMOTE_DIR" "$CONFIG_DIR" "$BACKUP_DIR"
 
     cat > "$CONFIG_DIR/config" <<EOF
 REMOTE_HOST=""
