@@ -33,8 +33,7 @@ Check if `~/.config/claude-sync/config` exists. If it does, read it and confirm 
 If it doesn't exist:
 1. Ask the user for their SSH target (e.g. `user@server.example.com`)
 2. Ask for the remote path (suggest `~/claude-sync-backup` as default)
-3. Ask where the claude-syncer repo is cloned (for self-update)
-4. Create the config file:
+3. Create the config file:
 
 ```bash
 mkdir -p ~/.config/claude-sync
@@ -42,9 +41,10 @@ cat > ~/.config/claude-sync/config <<EOF
 REMOTE_HOST="<user-provided>"
 REMOTE_PATH="<user-provided>"
 CLAUDE_DIR="$HOME/.claude"
-REPO_DIR="<user-provided>"
 EOF
 ```
+
+Note: `REPO_DIR` is no longer needed — `claude-sync update` finds the repo by following its own symlink.
 
 ## Step 3: Test SSH connectivity
 
