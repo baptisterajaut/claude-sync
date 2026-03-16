@@ -1,9 +1,13 @@
 ---
-name: init-local
-description: Generate a CLAUDE.local.md file with machine-specific environment details (OS, shell, runtime, etc.) — never synced
+name: claude-sync-init-local
+description: >
+  Generate a CLAUDE.local.md file with machine-specific environment details
+  (OS, shell, runtime, etc.) — never synced by claude-sync.
+  TRIGGER when: user wants to create or update their local environment config.
+user-invocable: true
 ---
 
-# /claude-sync:init-local — Generate Machine-Specific Config
+# /claude-sync-init-local — Generate Machine-Specific Config
 
 Generate `~/.claude/CLAUDE.local.md` by detecting the local environment. This file is never synced by claude-sync.
 

@@ -1,9 +1,13 @@
 ---
-name: fix
-description: Resolve claude-sync conflicts — shows semantic diffs of conflicting files and guides interactive merge resolution
+name: claude-sync-fix
+description: >
+  Resolve claude-sync conflicts — shows semantic diffs of conflicting files
+  and guides interactive merge resolution.
+  TRIGGER when: claude-sync reports conflicts, or user asks to fix sync conflicts.
+user-invocable: true
 ---
 
-# /claude-sync:fix — Conflict Resolution
+# /claude-sync-fix — Conflict Resolution
 
 You are resolving sync conflicts detected by claude-sync. Follow these steps.
 
@@ -26,6 +30,8 @@ cp ~/.claude/<file> "$backup_dir/<file>.local"
 ssh <REMOTE_HOST> "cat <REMOTE_PATH>/<file>" > "$backup_dir/<file>.remote"
 cp ~/.config/claude-sync/last-sync/<file> "$backup_dir/<file>.base" 2>/dev/null || true
 ```
+
+Read the REMOTE_HOST and REMOTE_PATH from `~/.config/claude-sync/config`.
 
 ## Step 3: For each conflicting file
 

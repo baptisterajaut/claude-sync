@@ -48,9 +48,9 @@ REPO_DIR="$HOME/claude-syncer"
 
 ## Skills
 
-- `/claude-sync:init` — First-time setup
-- `/claude-sync:fix` — Resolve conflicts
-- `/claude-sync:init-local` — Generate machine-specific `CLAUDE.local.md`
+- `/claude-sync-init` — First-time setup
+- `/claude-sync-fix` — Resolve conflicts
+- `/claude-sync-init-local` — Generate machine-specific `CLAUDE.local.md`
 
 ## How it works
 

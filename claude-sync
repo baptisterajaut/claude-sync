@@ -637,12 +637,14 @@ cmd_update() {
     git -C "$repo_dir" pull
 
     # Reinstall skills
-    local skills_dest="$CLAUDE_DIR/skills/claude-sync"
-    if [[ -d "$repo_dir/skills/claude-sync" ]]; then
-        rm -rf "$skills_dest"
-        cp -r "$repo_dir/skills/claude-sync" "$skills_dest"
-        echo "Updated skills: $skills_dest"
-    fi
+    for skill_dir in "$repo_dir"/skills/claude-sync-*/; do
+        [[ -d "$skill_dir" ]] || continue
+        local skill_name
+        skill_name=$(basename "$skill_dir")
+        rm -rf "$CLAUDE_DIR/skills/$skill_name"
+        cp -r "$skill_dir" "$CLAUDE_DIR/skills/$skill_name"
+    done
+    echo "Updated skills"
 
     echo "Update complete (v$(bash "$repo_dir/claude-sync" --version | awk '{print $2}'))."
 }
@@ -655,14 +657,20 @@ cmd_install() {
 
     # 1. Install skills
     local claude_dir="${CLAUDE_DIR:-$HOME/.claude}"
-    local skills_dest="$claude_dir/skills/claude-sync"
-    if [[ -d "$repo_dir/skills/claude-sync" ]]; then
-        mkdir -p "$claude_dir/skills"
-        rm -rf "$skills_dest"
-        cp -r "$repo_dir/skills/claude-sync" "$skills_dest"
-        echo "Installed skills: $skills_dest"
+    mkdir -p "$claude_dir/skills"
+    local skill_count=0
+    for skill_dir in "$repo_dir"/skills/claude-sync-*/; do
+        [[ -d "$skill_dir" ]] || continue
+        local skill_name
+        skill_name=$(basename "$skill_dir")
+        rm -rf "$claude_dir/skills/$skill_name"
+        cp -r "$skill_dir" "$claude_dir/skills/$skill_name"
+        (( skill_count++ )) || true
+    done
+    if (( skill_count > 0 )); then
+        echo "Installed $skill_count skills to $claude_dir/skills/"
     else
-        echo "error: skills/claude-sync not found in $repo_dir" >&2
+        echo "error: no skills/claude-sync-* directories found in $repo_dir" >&2
         exit 1
     fi
 
@@ -685,7 +693,7 @@ cmd_install() {
     fi
 
     # 3. Check PATH
-    if ! echo "$PATH" | tr ':' '\n' | grep -qx "$target_dir"; then
+    if ! echo "$PATH" | tr ':' '\n' | grep -qxF "$target_dir"; then
         echo ""
         echo "warning: $target_dir is not in your PATH" >&2
         echo "Add this to your ~/.bashrc:" >&2
@@ -693,7 +701,7 @@ cmd_install() {
     fi
 
     echo ""
-    echo "Done. Run /claude-sync:init in Claude Code to configure sync."
+    echo "Done. Run /claude-sync-init in Claude Code to configure sync."
 }
 
 # Allow sourcing for tests

@@ -1,9 +1,13 @@
 ---
-name: init
-description: First-time setup of claude-sync — configure SSH target, test connectivity, run initial sync with interactive conflict resolution, configure SessionStart hook
+name: claude-sync-init
+description: >
+  First-time setup of claude-sync — configure SSH target, test connectivity,
+  run initial sync with interactive conflict resolution, configure SessionStart hook.
+  TRIGGER when: user wants to set up claude-sync on a new machine.
+user-invocable: true
 ---
 
-# /claude-sync:init — First-Time Setup
+# /claude-sync-init — First-Time Setup
 
 You are setting up claude-sync for the first time on this machine. Follow these steps interactively.
 
@@ -15,7 +19,7 @@ Run: `claude-sync status 2>&1`
 
 If it succeeds (exit 0, outputs file status), claude-sync is already configured. Tell the user:
 
-> "claude-sync is already initialized on this machine. Run `claude-sync status` to see current state, or `/claude-sync:fix` to resolve conflicts."
+> "claude-sync is already initialized on this machine. Run `claude-sync status` to see current state, or `/claude-sync-fix` to resolve conflicts."
 
 **Stop here** unless the user explicitly wants to re-initialize.
 
@@ -24,7 +28,7 @@ If it succeeds (exit 0, outputs file status), claude-sync is already configured.
 Run:
 - `which rsync` — must be available
 - `which ssh` — must be available
-- `which claude-sync` — if not found, ask user where the claude-syncer repo is cloned and suggest adding it to PATH
+- `which claude-sync` — if not found, ask user where the claude-sync repo is cloned and suggest running `./claude-sync install`
 
 ## Step 2: Check existing config
 
@@ -43,8 +47,6 @@ REMOTE_PATH="<user-provided>"
 CLAUDE_DIR="$HOME/.claude"
 EOF
 ```
-
-Note: `REPO_DIR` is no longer needed — `claude-sync update` finds the repo by following its own symlink.
 
 ## Step 3: Test SSH connectivity
 
@@ -102,4 +104,4 @@ If not present, add the SessionStart hook. Be careful to merge with existing hoo
 
 Run `claude-sync status` and show the user the result. Confirm everything is clean.
 
-Print: "claude-sync is configured. Your config will sync automatically at the start of each Claude session. Run `/claude-sync:init-local` to generate machine-specific CLAUDE.local.md."
+Print: "claude-sync is configured. Your config will sync automatically at the start of each Claude session. Run `/claude-sync-init-local` to generate machine-specific CLAUDE.local.md."
