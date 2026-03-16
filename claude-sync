@@ -30,7 +30,8 @@ Commands:
     status    Show per-file sync status
     diff      Show diff between local and remote
     update    Self-update from git repo
-    install   Install skills and symlink script into PATH
+    init      First-time setup (install + launch Claude for config)
+    fix       Launch Claude to resolve sync conflicts
 
 Options:
     -n, --dry-run   Preview actions without applying (sync)
@@ -645,46 +646,56 @@ cmd_update() {
     echo "Update complete (v$(bash "$repo_dir/claude-sync" --version | awk '{print $2}'))."
 }
 
-# --- Install command ---
 
-cmd_install() {
+# --- Init command (install + launch skill) ---
+
+cmd_init() {
+    local real_script
+    real_script=$(readlink -f "${BASH_SOURCE[0]}")
     local repo_dir
-    repo_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+    repo_dir=$(dirname "$real_script")
 
-    # 1. Plugin info
-    echo "Plugin directory: $repo_dir"
-    echo ""
-    echo "To use skills (/claude-sync:init, etc.), launch Claude with:"
-    echo "  claude --plugin-dir $repo_dir"
-
-    # 2. Symlink script into PATH
+    # Symlink script into PATH (if not already)
     local target_dir="$HOME/.local/bin"
     mkdir -p "$target_dir"
     local target="$target_dir/claude-sync"
     if [[ -L "$target" || -f "$target" ]]; then
         local existing
         existing=$(readlink -f "$target" 2>/dev/null || echo "$target")
-        if [[ "$existing" == "$repo_dir/claude-sync" ]]; then
-            echo "Script already linked: $target → $repo_dir/claude-sync"
-        else
+        if [[ "$existing" != "$repo_dir/claude-sync" ]]; then
             echo "warning: $target already exists (pointing to $existing)" >&2
             echo "Remove it first if you want to relink." >&2
         fi
     else
         ln -s "$repo_dir/claude-sync" "$target"
-        echo "Linked script: $target → $repo_dir/claude-sync"
+        echo "Linked: $target → $repo_dir/claude-sync"
     fi
 
-    # 3. Check PATH
     if ! echo "$PATH" | tr ':' '\n' | grep -qxF "$target_dir"; then
-        echo ""
         echo "warning: $target_dir is not in your PATH" >&2
-        echo "Add this to your ~/.bashrc:" >&2
-        echo "  export PATH=\"\$HOME/.local/bin:\$PATH\"" >&2
+        echo "Add to ~/.bashrc:  export PATH=\"\$HOME/.local/bin:\$PATH\"" >&2
     fi
 
-    echo ""
-    echo "Done. Run /claude-sync:init in Claude Code to configure sync."
+    # Launch Claude with the plugin to run /claude-sync:init
+    cmd_launch_skill "init"
+}
+
+# --- Launch Claude with a skill ---
+
+cmd_launch_skill() {
+    local skill_name="$1"
+    local real_script
+    real_script=$(readlink -f "${BASH_SOURCE[0]}")
+    local repo_dir
+    repo_dir=$(dirname "$real_script")
+
+    if ! command -v claude >/dev/null 2>&1; then
+        echo "error: claude CLI not found in PATH" >&2
+        exit 1
+    fi
+
+    exec claude --plugin-dir "$repo_dir" \
+        --append-system-prompt "The user wants to run /claude-sync:$skill_name. Invoke it immediately using the Skill tool."
 }
 
 # Allow sourcing for tests
@@ -710,7 +721,8 @@ case "$COMMAND" in
     status) load_config; cmd_status "$@" ;;
     diff)   load_config; cmd_diff "$@" ;;
     update)  load_config; cmd_update "$@" ;;
-    install) cmd_install "$@" ;;
+    init)    cmd_init "$@" ;;
+    fix)     cmd_launch_skill "fix" ;;
     "")      usage; exit 1 ;;
     *)      echo "error: unknown command '$COMMAND'" >&2; exit 1 ;;
 esac

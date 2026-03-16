@@ -16,11 +16,8 @@ Sync your Claude Code configuration across machines using rsync over SSH.
 git clone git@github.com:baptisterajaut/claude-sync.git
 cd claude-sync
 
-# Install (symlinks script to ~/.local/bin, copies skills to ~/.claude/skills/)
-./claude-sync install
-
-# Init (run in Claude Code)
-# /claude-sync:init
+# First-time setup (symlinks script to PATH + launches Claude for config)
+./claude-sync init
 ```
 
 ## Commands
@@ -31,7 +28,8 @@ cd claude-sync
 | `claude-sync status` | Show per-file sync state |
 | `claude-sync diff` | Show diffs between local and remote |
 | `claude-sync update` | Self-update from git repo |
-| `claude-sync install` | Install skills + symlink script |
+| `claude-sync init` | First-time setup (install + configure) |
+| `claude-sync fix` | Launch Claude to resolve conflicts |
 
 Use `--dry-run` / `-n` with `sync` to preview without applying.
 
@@ -43,14 +41,11 @@ Use `--dry-run` / `-n` with `sync` to preview without applying.
 REMOTE_HOST="user@your-server.com"
 REMOTE_PATH="~/claude-sync-backup"
 CLAUDE_DIR="$HOME/.claude"
-REPO_DIR="$HOME/claude-syncer"
 ```
 
 ## Skills
 
-- `/claude-sync:init` — First-time setup
-- `/claude-sync:fix` — Resolve conflicts
-- `/claude-sync:init-local` — Generate machine-specific `CLAUDE.local.md`
+Available as `/claude-sync:init`, `/claude-sync:fix`, `/claude-sync:init-local` when Claude is launched with the plugin.
 
 ## How it works
 
