@@ -1,0 +1,87 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+VERSION="0.1.0"
+CONFIG_DIR="${CLAUDE_SYNC_CONFIG_DIR:-$HOME/.config/claude-sync}"
+CONFIG_FILE="$CONFIG_DIR/config"
+LOCK_FILE="$CONFIG_DIR/.lock"
+LAST_SYNC_DIR="$CONFIG_DIR/last-sync"
+BACKUP_DIR="$CONFIG_DIR/backups"
+
+DEFAULT_SYNCLIST="CLAUDE.md
+settings.json
+skills/
+agents/
+plugins/installed_plugins.json
+plugins/known_marketplaces.json"
+
+EXCLUDE_PATTERNS="skills/claude-sync/"
+
+DRY_RUN=false
+
+usage() {
+    cat <<EOF
+claude-sync $VERSION — sync Claude Code config across machines
+
+Usage: claude-sync <command> [options]
+
+Commands:
+    sync      Bidirectional safe sync with conflict detection
+    status    Show per-file sync status
+    diff      Show diff between local and remote
+    update    Self-update from git repo
+
+Options:
+    -n, --dry-run   Preview actions without applying (sync)
+    -h, --help      Show this help
+    -v, --version   Show version
+EOF
+}
+
+load_config() {
+    if [[ ! -f "$CONFIG_FILE" ]]; then
+        echo "error: config not found at $CONFIG_FILE" >&2
+        echo "Run /claude-sync:init to set up." >&2
+        exit 1
+    fi
+    # shellcheck source=/dev/null
+    source "$CONFIG_FILE"
+    : "${REMOTE_PATH:?REMOTE_PATH not set in $CONFIG_FILE}"
+    : "${CLAUDE_DIR:?CLAUDE_DIR not set in $CONFIG_FILE}"
+}
+
+load_synclist() {
+    local synclist_file="$CONFIG_DIR/synclist"
+    if [[ -f "$synclist_file" ]]; then
+        grep -v '^#' "$synclist_file" | grep -v '^$'
+    else
+        echo "$DEFAULT_SYNCLIST"
+    fi
+}
+
+# Allow sourcing for tests
+if [[ "${1:-}" == "--source-only" ]]; then
+    return 0 2>/dev/null || exit 0
+fi
+
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        -n|--dry-run) DRY_RUN=true; shift ;;
+        -h|--help) usage; exit 0 ;;
+        -v|--version) echo "claude-sync $VERSION"; exit 0 ;;
+        -*) echo "error: unknown option $1" >&2; exit 1 ;;
+        *) break ;;
+    esac
+done
+
+COMMAND="${1:-}"
+shift || true
+
+case "$COMMAND" in
+    sync)   load_config; cmd_sync "$@" ;;
+    status) load_config; cmd_status "$@" ;;
+    diff)   load_config; cmd_diff "$@" ;;
+    update) load_config; cmd_update "$@" ;;
+    "")     usage; exit 1 ;;
+    *)      echo "error: unknown command '$COMMAND'" >&2; exit 1 ;;
+esac
