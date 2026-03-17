@@ -31,6 +31,7 @@ Commands:
     init      First-time setup (install + launch Claude for config)
     fix       Launch Claude to resolve sync conflicts
     resolve [files...]  Accept local version for conflicting files (local → remote + base)
+    learn     Review project memories and promote to global CLAUDE.md
 
 Options:
     -n, --dry-run   Preview actions without applying (sync)
@@ -1150,6 +1151,7 @@ case "$COMMAND" in
     update)  load_config; cmd_update "$@" ;;
     init)    cmd_init "$@" ;;
     fix)     cmd_launch_skill "fix" ;;
+    learn)   cmd_launch_skill "learn" ;;
     resolve) load_config; cmd_resolve "$@" ;;
     "")      usage; exit 1 ;;
     *)      echo "error: unknown command '$COMMAND'" >&2; exit 1 ;;
