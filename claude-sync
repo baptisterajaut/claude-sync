@@ -204,9 +204,18 @@ _load_remote_checksums_from_output() {
     done <<< "$1"
 }
 
-get_local_checksum() { echo "${LOCAL_CHECKSUMS[$1]:-ABSENT} $1"; }
-get_base_checksum() { echo "${BASE_CHECKSUMS[$1]:-ABSENT} $1"; }
-get_remote_checksum() { echo "${REMOTE_CHECKSUMS[$1]:-ABSENT} $1"; }
+# Safe associative array lookup (set -u compatible, no subshell)
+# Usage: _hash_get LOCAL_CHECKSUMS "$filepath" local_hash
+_hash_get() {
+    local -n _arr=$1
+    local key="$2"
+    local -n _out=$3
+    if [[ -n "${_arr[$key]+x}" ]]; then
+        _out="${_arr[$key]}"
+    else
+        _out="ABSENT"
+    fi
+}
 
 fetch_remote_checksums_readonly() {
     local output
@@ -319,9 +328,9 @@ cmd_status() {
     while IFS= read -r filepath; do
         [[ -z "$filepath" ]] && continue
         local local_hash base_hash remote_hash
-        local_hash=$(get_local_checksum "$filepath" | awk '{print $1}')
-        base_hash=$(get_base_checksum "$filepath" | awk '{print $1}')
-        remote_hash=$(get_remote_checksum "$filepath" | awk '{print $1}')
+        _hash_get LOCAL_CHECKSUMS "$filepath" local_hash
+        _hash_get BASE_CHECKSUMS "$filepath" base_hash
+        _hash_get REMOTE_CHECKSUMS "$filepath" remote_hash
 
         local action
         action=$(decide_action "$local_hash" "$base_hash" "$remote_hash")
@@ -339,7 +348,7 @@ cmd_status() {
     [[ -f "$LAST_SYNC_DIR/plugins.list" ]] && base_plugins=$(sort -u "$LAST_SYNC_DIR/plugins.list")
     # Get remote plugins.list checksum from cache
     local remote_pl_hash
-    remote_pl_hash=$(get_remote_checksum "plugins.list" | awk '{print $1}')
+    _hash_get REMOTE_CHECKSUMS "plugins.list" remote_pl_hash
     if [[ "$remote_pl_hash" != "ABSENT" ]]; then
         # Fetch the file content for comparison
         if [[ -z "${REMOTE_HOST:-}" ]]; then
@@ -611,9 +620,9 @@ cmd_sync() {
     while IFS= read -r filepath; do
         [[ -z "$filepath" ]] && continue
         local local_hash base_hash remote_hash action
-        local_hash=$(get_local_checksum "$filepath" | awk '{print $1}')
-        base_hash=$(get_base_checksum "$filepath" | awk '{print $1}')
-        remote_hash=$(get_remote_checksum "$filepath" | awk '{print $1}')
+        _hash_get LOCAL_CHECKSUMS "$filepath" local_hash
+        _hash_get BASE_CHECKSUMS "$filepath" base_hash
+        _hash_get REMOTE_CHECKSUMS "$filepath" remote_hash
         action=$(decide_action "$local_hash" "$base_hash" "$remote_hash")
 
         case "$action" in
@@ -825,9 +834,9 @@ cmd_diff() {
     while IFS= read -r filepath; do
         [[ -z "$filepath" ]] && continue
         local local_hash base_hash remote_hash action
-        local_hash=$(get_local_checksum "$filepath" | awk '{print $1}')
-        base_hash=$(get_base_checksum "$filepath" | awk '{print $1}')
-        remote_hash=$(get_remote_checksum "$filepath" | awk '{print $1}')
+        _hash_get LOCAL_CHECKSUMS "$filepath" local_hash
+        _hash_get BASE_CHECKSUMS "$filepath" base_hash
+        _hash_get REMOTE_CHECKSUMS "$filepath" remote_hash
         action=$(decide_action "$local_hash" "$base_hash" "$remote_hash")
         if [[ "$action" != "clean" ]]; then
             changed_files+="$filepath"$'\n'
@@ -866,8 +875,8 @@ cmd_diff() {
         local remote_file="$tmpdir/remote/$filepath"
 
         local local_hash remote_hash
-        local_hash=$(get_local_checksum "$filepath" | awk '{print $1}')
-        remote_hash=$(get_remote_checksum "$filepath" | awk '{print $1}')
+        _hash_get LOCAL_CHECKSUMS "$filepath" local_hash
+        _hash_get REMOTE_CHECKSUMS "$filepath" remote_hash
 
         echo "=== $filepath ($action) ==="
         if [[ "$local_hash" == "ABSENT" ]]; then
@@ -924,9 +933,9 @@ cmd_resolve() {
     while IFS= read -r filepath; do
         [[ -z "$filepath" ]] && continue
         local local_hash base_hash remote_hash action
-        local_hash=$(get_local_checksum "$filepath" | awk '{print $1}')
-        base_hash=$(get_base_checksum "$filepath" | awk '{print $1}')
-        remote_hash=$(get_remote_checksum "$filepath" | awk '{print $1}')
+        _hash_get LOCAL_CHECKSUMS "$filepath" local_hash
+        _hash_get BASE_CHECKSUMS "$filepath" base_hash
+        _hash_get REMOTE_CHECKSUMS "$filepath" remote_hash
         action=$(decide_action "$local_hash" "$base_hash" "$remote_hash")
 
         if [[ "$action" == "conflict" ]]; then
@@ -956,7 +965,7 @@ cmd_resolve() {
         if $should_resolve_plugins; then
             local local_pl_hash remote_pl_hash
             local_pl_hash=$(md5sum "$CLAUDE_DIR/plugins.list" | awk '{print $1}')
-            remote_pl_hash=$(get_remote_checksum "plugins.list" | awk '{print $1}')
+            _hash_get REMOTE_CHECKSUMS "plugins.list" remote_pl_hash
             if [[ "$local_pl_hash" != "$remote_pl_hash" ]]; then
                 echo "plugins.list" >> "$push_file"
                 (( resolved_count++ )) || true

@@ -23,7 +23,7 @@ teardown() { teardown_test_env; }
     [[ "$result" == *"CLAUDE.md"* ]]
 }
 
-@test "fetch_remote_checksums_readonly and get_remote_checksum work in local mode" {
+@test "fetch_remote_checksums_readonly populates REMOTE_CHECKSUMS array" {
     export CLAUDE_SYNC_CONFIG_DIR="$CONFIG_DIR"
     source ./claude-sync --source-only
     load_config
@@ -31,12 +31,7 @@ teardown() { teardown_test_env; }
     mkdir -p "$REMOTE_DIR/skills/test"
     echo "skill" > "$REMOTE_DIR/skills/test/SKILL.md"
     fetch_remote_checksums_readonly
-    result=$(get_remote_checksum "CLAUDE.md")
-    hash=$(echo "$result" | awk '{print $1}')
-    [ "${#hash}" -eq 32 ]
-    result2=$(get_remote_checksum "skills/test/SKILL.md")
-    hash2=$(echo "$result2" | awk '{print $1}')
-    [ "${#hash2}" -eq 32 ]
-    result3=$(get_remote_checksum "nonexistent.md")
-    [[ "$result3" == "ABSENT"* ]]
+    [ "${#REMOTE_CHECKSUMS[CLAUDE.md]}" -eq 32 ]
+    [ "${#REMOTE_CHECKSUMS[skills/test/SKILL.md]}" -eq 32 ]
+    [ -z "${REMOTE_CHECKSUMS[nonexistent.md]+x}" ]
 }
