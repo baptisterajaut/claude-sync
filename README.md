@@ -31,13 +31,15 @@ cd claude-sync
 | `claude-sync update` | Self-update from git repo |
 | `claude-sync init` | First-time setup |
 | `claude-sync fix` | Launch Claude to resolve conflicts |
+| `claude-sync learn` | Review project memories, promote to global CLAUDE.md |
 
 Use `--dry-run` / `-n` with `sync` to preview without applying.
 
 ## Prerequisites
 
-- **bash** (>= 4.0), **rsync**, **ssh**
-- **SSH key-based auth** to your sync server — claude-sync runs non-interactively (SessionStart hook), so password prompts will hang. Set up pubkey auth:
+- **bash** (>= 4.0), **git**
+- **rsync + ssh** (for rsync mode) or **git remote** (for git mode)
+- **SSH key-based auth** if using rsync mode — claude-sync runs non-interactively (SessionStart hook), so password prompts will hang:
 
 ```bash
 ssh-keygen -t ed25519               # if you don't have a key yet
@@ -49,12 +51,23 @@ ssh user@your-server.com "echo ok"  # verify it works without password
 
 `~/.config/claude-sync/config` (created by `init`):
 
+### rsync mode (default)
 ```bash
 REMOTE_HOST="user@your-server.com"
 REMOTE_PATH="/home/user/claude-sync-backup"  # absolute path, resolved at init
 CLAUDE_DIR="$HOME/.claude"
 SSH_PORT="22"  # optional, defaults to 22
 ```
+
+### git mode
+```bash
+BACKEND="git"
+GIT_REPO="/home/user/dotfiles"    # local clone of a private git repo
+GIT_SUBDIR="claude-sync"          # subdirectory within the repo
+CLAUDE_DIR="$HOME/.claude"
+```
+
+Works with any git forge (GitHub, GitLab, Gitea, Forgejo). Must be a private repo.
 
 ## What gets synced
 
