@@ -46,16 +46,24 @@ load_config() {
     fi
     # shellcheck source=/dev/null
     source "$CONFIG_FILE"
-    : "${REMOTE_PATH:?REMOTE_PATH not set in $CONFIG_FILE}"
     : "${CLAUDE_DIR:?CLAUDE_DIR not set in $CONFIG_FILE}"
     # Expand ~ in local paths (tilde isn't expanded when quoted in config files)
     CLAUDE_DIR="${CLAUDE_DIR/#\~/$HOME}"
-    # REMOTE_PATH should always be absolute (resolved by /claude-sync:init)
 
-    # SSH port (optional, defaults to 22)
-    SSH_PORT="${SSH_PORT:-22}"
-    SSH_CMD="ssh -p $SSH_PORT"
-    RSYNC_SSH="ssh -p $SSH_PORT"
+    BACKEND="${BACKEND:-rsync}"
+    if [[ "$BACKEND" == "git" ]]; then
+        : "${GIT_REPO:?GIT_REPO not set in $CONFIG_FILE}"
+        : "${GIT_SUBDIR:?GIT_SUBDIR not set in $CONFIG_FILE}"
+        REMOTE_HOST=""
+        REMOTE_PATH="$GIT_REPO/$GIT_SUBDIR"
+        mkdir -p "$REMOTE_PATH"
+    else
+        : "${REMOTE_PATH:?REMOTE_PATH not set in $CONFIG_FILE}"
+        # REMOTE_PATH should always be absolute (resolved by /claude-sync:init)
+        SSH_PORT="${SSH_PORT:-22}"
+        SSH_CMD="ssh -p $SSH_PORT"
+        RSYNC_SSH="ssh -p $SSH_PORT"
+    fi
 }
 
 load_synclist() {
@@ -558,16 +566,20 @@ remote_finalize() {
 # --- Sync command ---
 
 cmd_sync() {
-    acquire_local_lock
-
-    # Phase 1: remote_init (lock + bootstrap + checksums)
-    local remote_checksums
-    if ! remote_checksums=$(remote_init); then
-        echo "error: could not connect to remote (locked or unreachable)" >&2
-        return 1
+    # Phase 1: acquire remote checksums
+    if [[ "$BACKEND" == "git" ]]; then
+        git_pre_sync || return 1
+        _load_checksums_into REMOTE_CHECKSUMS "$REMOTE_PATH"
+    else
+        acquire_local_lock
+        local remote_checksums
+        if ! remote_checksums=$(remote_init); then
+            echo "error: could not connect to remote (locked or unreachable)" >&2
+            return 1
+        fi
+        _load_remote_checksums_from_output "$remote_checksums"
+        trap 'release_remote_lock; release_local_lock' EXIT
     fi
-    _load_remote_checksums_from_output "$remote_checksums"
-    trap 'release_remote_lock; release_local_lock' EXIT
 
     mkdir -p "$LAST_SYNC_DIR"
 
@@ -583,7 +595,9 @@ cmd_sync() {
 
     if [[ -z "$all_files" ]]; then
         echo "No files to sync."
-        release_remote_lock; trap release_local_lock EXIT
+        if [[ "$BACKEND" != "git" ]]; then
+            release_remote_lock; trap release_local_lock EXIT
+        fi
         return 0
     fi
 
@@ -620,7 +634,10 @@ cmd_sync() {
         [[ -n "$delete_remote_list" ]] && echo "$delete_remote_list" | sed '/^$/d' | sed 's/^/[dry-run] delete remote: /'
         [[ -n "$delete_local_list" ]] && echo "$delete_local_list" | sed '/^$/d' | sed 's/^/[dry-run] delete local: /'
         [[ -n "$conflict_list" ]] && echo "$conflict_list" | sed '/^$/d' | sed 's/^/CONFLICT: /' >&2
-        release_remote_lock; trap release_local_lock EXIT; rm -rf "$tmpdir"
+        if [[ "$BACKEND" != "git" ]]; then
+            release_remote_lock; trap release_local_lock EXIT
+        fi
+        rm -rf "$tmpdir"
         [[ -n "$conflict_list" ]] && return 1
         [[ -z "$push_list$pull_list$delete_remote_list$delete_local_list" ]] && echo "Everything in sync."
         return 0
@@ -650,27 +667,33 @@ cmd_sync() {
     fi
 
     # Phase 5: Verify + remote deletes + release lock
-    local verify_file="$tmpdir/verify_list"
-    echo "$push_list" | sed '/^$/d' > "$verify_file"
-    local verify_output
-    verify_output=$(remote_finalize "$verify_file" "$delete_remote_list")
-    trap release_local_lock EXIT
+    if [[ "$BACKEND" != "git" ]]; then
+        local verify_file="$tmpdir/verify_list"
+        echo "$push_list" | sed '/^$/d' > "$verify_file"
+        local verify_output
+        verify_output=$(remote_finalize "$verify_file" "$delete_remote_list")
+        trap release_local_lock EXIT
 
-    if [[ -n "$delete_remote_list" ]]; then
-        echo "$delete_remote_list" | sed '/^$/d' | sed 's/^/deleted remote: /'
-    fi
+        if [[ -n "$delete_remote_list" ]]; then
+            echo "$delete_remote_list" | sed '/^$/d' | sed 's/^/deleted remote: /'
+        fi
 
-    # Verify push checksums
-    if [[ -n "$push_list" ]]; then
-        while IFS= read -r filepath; do
-            [[ -z "$filepath" ]] && continue
-            local expected actual
-            expected=$(md5sum "$CLAUDE_DIR/$filepath" | awk '{print $1}')
-            actual=$(echo "$verify_output" | grep -F "$filepath" | awk '{print $1}')
-            if [[ "$expected" != "$actual" ]]; then
-                echo "error: integrity check failed for $filepath (push)" >&2
-            fi
-        done <<< "$push_list"
+        # Verify push checksums
+        if [[ -n "$push_list" ]]; then
+            while IFS= read -r filepath; do
+                [[ -z "$filepath" ]] && continue
+                local expected actual
+                expected=$(md5sum "$CLAUDE_DIR/$filepath" | awk '{print $1}')
+                actual=$(echo "$verify_output" | grep -F "$filepath" | awk '{print $1}')
+                if [[ "$expected" != "$actual" ]]; then
+                    echo "error: integrity check failed for $filepath (push)" >&2
+                fi
+            done <<< "$push_list"
+        fi
+    else
+        if [[ -n "$delete_remote_list" ]]; then
+            echo "$delete_remote_list" | sed '/^$/d' | sed 's/^/deleted remote: /'
+        fi
     fi
 
     # Phase 6: Update base
@@ -762,6 +785,11 @@ cmd_sync() {
                 echo "  installed: $plugin" || \
                 echo "  skipped: $plugin" 2>/dev/null
         done < "$CLAUDE_DIR/plugins.list"
+    fi
+
+    # Git backend: commit + push changes to remote repo
+    if [[ "$BACKEND" == "git" && -z "$conflict_list" ]]; then
+        git_post_sync
     fi
 
     # Report conflicts (from both normal sync and plugins merge)
@@ -863,14 +891,19 @@ cmd_diff() {
 cmd_resolve() {
     local requested_files=("$@")
 
-    acquire_local_lock
-    local remote_checksums
-    if ! remote_checksums=$(remote_init); then
-        echo "error: could not connect to remote (locked or unreachable)" >&2
-        return 1
+    if [[ "$BACKEND" == "git" ]]; then
+        git_pre_sync || return 1
+        _load_checksums_into REMOTE_CHECKSUMS "$REMOTE_PATH"
+    else
+        acquire_local_lock
+        local remote_checksums
+        if ! remote_checksums=$(remote_init); then
+            echo "error: could not connect to remote (locked or unreachable)" >&2
+            return 1
+        fi
+        _load_remote_checksums_from_output "$remote_checksums"
+        trap 'release_remote_lock; release_local_lock' EXIT
     fi
-    _load_remote_checksums_from_output "$remote_checksums"
-    trap 'release_remote_lock; release_local_lock' EXIT
 
     mkdir -p "$LAST_SYNC_DIR"
     generate_plugins_list
@@ -934,24 +967,30 @@ cmd_resolve() {
         if (( ${#requested_files[@]} > 0 )); then
             echo "error: specified files are not in conflict" >&2
             rm -rf "$tmpdir"
-            release_remote_lock
-            trap release_local_lock EXIT
+            if [[ "$BACKEND" != "git" ]]; then
+                release_remote_lock
+                trap release_local_lock EXIT
+            fi
             return 1
         fi
         echo "No conflicts to resolve."
         rm -rf "$tmpdir"
-        release_remote_lock
-        trap release_local_lock EXIT
+        if [[ "$BACKEND" != "git" ]]; then
+            release_remote_lock
+            trap release_local_lock EXIT
+        fi
         return 0
     fi
 
     # Push local versions to remote
     batch_push "$push_file"
 
-    # Verify + release lock
-    local verify_output
-    verify_output=$(remote_finalize "$push_file" "")
-    trap release_local_lock EXIT
+    if [[ "$BACKEND" != "git" ]]; then
+        # Verify + release lock
+        local verify_output
+        verify_output=$(remote_finalize "$push_file" "")
+        trap release_local_lock EXIT
+    fi
 
     # Update base from local
     while IFS= read -r filepath; do
@@ -959,6 +998,11 @@ cmd_resolve() {
         update_base_from_local "$filepath"
         echo "resolved: $filepath (local → remote)"
     done < "$push_file"
+
+    # Git backend: commit + push changes to remote repo
+    if [[ "$BACKEND" == "git" ]]; then
+        git_post_sync
+    fi
 
     rm -rf "$tmpdir"
     echo "Resolved $resolved_count conflict(s). Run 'claude-sync sync' to verify."
@@ -1039,6 +1083,43 @@ cmd_launch_skill() {
     exec claude --plugin-dir "$repo_dir" \
         --append-system-prompt "When the user sends a message starting with /, invoke the corresponding skill immediately using the Skill tool. Do not explain what the skill does — just invoke it." \
         "/claude-sync:$skill_name"
+}
+
+# --- Git backend ---
+
+git_pre_sync() {
+    if [[ -n $(git -C "$GIT_REPO" status --porcelain "$GIT_SUBDIR") ]]; then
+        echo "error: $GIT_SUBDIR has uncommitted changes in $GIT_REPO" >&2
+        return 1
+    fi
+    git -C "$GIT_REPO" fetch || return 1
+    local remote_branch
+    remote_branch=$(git -C "$GIT_REPO" symbolic-ref refs/remotes/origin/HEAD 2>/dev/null | sed 's|refs/remotes/||') || true
+    if [[ -z "$remote_branch" ]]; then
+        # Fallback: detect from available remote branches
+        for candidate in origin/main origin/master; do
+            if git -C "$GIT_REPO" rev-parse --verify "$candidate" >/dev/null 2>&1; then
+                remote_branch="$candidate"
+                break
+            fi
+        done
+    fi
+    [[ -n "$remote_branch" ]] && git -C "$GIT_REPO" checkout "$remote_branch" -- "$GIT_SUBDIR/" 2>/dev/null || true
+}
+
+git_post_sync() {
+    [[ -z $(git -C "$GIT_REPO" status --porcelain "$GIT_SUBDIR") ]] && return 0
+    git -C "$GIT_REPO" add "$GIT_SUBDIR"
+    git -C "$GIT_REPO" commit -m "claude-sync: update" >/dev/null
+    local attempts=0
+    while ! git -C "$GIT_REPO" push 2>/dev/null; do
+        (( attempts++ )) || true
+        if (( attempts >= 3 )); then
+            echo "error: git push failed after 3 attempts" >&2
+            return 1
+        fi
+        git -C "$GIT_REPO" pull --rebase >/dev/null || return 1
+    done
 }
 
 # Allow sourcing for tests
