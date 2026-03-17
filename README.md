@@ -37,8 +37,10 @@ Use `--dry-run` / `-n` with `sync` to preview without applying.
 
 ## Prerequisites
 
-- **bash** (>= 4.0), **git**
-- **rsync + ssh** (for rsync mode) or **git remote** (for git mode)
+- **bash** (>= 4.0)
+- Pick a sync backend:
+  - **git mode** — `git` + a private repo (GitHub, GitLab, Gitea, your own dotfiles repo)
+  - **rsync mode** — `rsync` + `ssh` + any server with SSH access (a Raspberry Pi, a VPS, a NAS, your prod server if you're feeling adventurous)
 - **SSH key-based auth** if using rsync mode — claude-sync runs non-interactively (SessionStart hook), so password prompts will hang:
 
 ```bash
