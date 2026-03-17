@@ -1104,7 +1104,10 @@ git_pre_sync() {
             fi
         done
     fi
-    [[ -n "$remote_branch" ]] && git -C "$GIT_REPO" checkout "$remote_branch" -- "$GIT_SUBDIR/" 2>/dev/null || true
+    if [[ -n "$remote_branch" ]]; then
+        # Fast-forward to remote HEAD so post_sync commits on top of it
+        git -C "$GIT_REPO" reset --hard "$remote_branch" >/dev/null 2>&1 || true
+    fi
 }
 
 git_post_sync() {
