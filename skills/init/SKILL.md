@@ -46,15 +46,23 @@ Also check:
 
 If rsync or ssh is missing, tell the user to install them.
 
-## Step 2: Configure SSH target
+## Step 2: Configure sync target
 
 Check if `~/.config/claude-sync/config` exists. If it does, read it and confirm with the user.
 
-If it doesn't exist:
-1. Ask the user for their SSH target (e.g. `user@server.example.com`)
-2. Ask for the SSH port (default 22 — skip if standard)
-3. Ask for the remote path (suggest `claude-sync-backup` as default — relative to the remote user's home)
-3. **Resolve to absolute path**: run `ssh <HOST> "echo \$HOME"` and prepend it to the relative path (e.g. if remote HOME is `/root` and user said `claude-sync-backup`, store `/root/claude-sync-backup`). Always store an absolute path.
+If it doesn't exist, ask: "Where should your config be synced? Give me either:
+- An SSH target (e.g. `user@myserver.com`) for rsync mode
+- A git repo path or URL for git mode (can be a subdirectory of an existing dotfiles repo)"
+
+**Detect mode from answer:**
+- Contains `@` without `.git` and no known forge domain → **rsync mode**
+- Contains `.git`, or is a local directory with `.git/` inside, or mentions github/gitlab/gitea/forgejo → **git mode**
+
+### If rsync mode:
+
+1. Ask for the SSH port (default 22 — skip if standard)
+2. Ask for the remote path (suggest `claude-sync-backup` as default — relative to the remote user's home)
+3. **Resolve to absolute path**: run `ssh <HOST> "echo \$HOME"` and prepend it
 4. Create the config:
 
 ```bash
@@ -64,6 +72,27 @@ REMOTE_HOST="<user-provided>"
 REMOTE_PATH="<resolved-absolute-path>"
 CLAUDE_DIR="$HOME/.claude"
 SSH_PORT="<port if not 22, omit line otherwise>"
+EOF
+```
+
+### If git mode:
+
+1. If it's a URL, ask where to clone it locally (suggest `~/dotfiles`). Clone it if needed.
+2. If it's a local path, verify it's a git repo: `test -d <path>/.git`
+3. Check remote URL: `git -C <path> remote get-url origin` — if HTTPS, warn about credential management (SSH preferred)
+4. Ask: "Is this repo private?" (no automated check — works across all forges)
+5. Ask for the subdirectory name within the repo (suggest `claude-sync`)
+6. Create subdirectory if needed: `mkdir -p <path>/<subdir>`
+7. Test push: `git -C <path> push --dry-run 2>&1` — verify write access
+8. Create the config:
+
+```bash
+mkdir -p ~/.config/claude-sync
+cat > ~/.config/claude-sync/config <<'EOF'
+BACKEND="git"
+GIT_REPO="<local-path>"
+GIT_SUBDIR="<subdirectory>"
+CLAUDE_DIR="$HOME/.claude"
 EOF
 ```
 
