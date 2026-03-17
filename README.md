@@ -1,6 +1,6 @@
 # claude-sync
 
-Sync your Claude Code configuration across machines using rsync over SSH.
+Sync your Claude Code configuration across machines using rsync over SSH or git.
 
 ## Features
 
@@ -8,7 +8,8 @@ Sync your Claude Code configuration across machines using rsync over SSH.
 - **Never overwrites** — conflicts are detected, not silently resolved
 - **Claude-assisted resolution** — `/claude-sync:fix` skill merges conflicts interactively
 - **Plugin sync** — `plugins.list` auto-merges across machines (installs and removals propagated)
-- **Minimal dependencies** — bash, rsync, ssh
+- **Two backends** — rsync over SSH or git (works with any forge)
+- **Minimal dependencies** — bash + rsync/ssh or git
 
 ## Quick start
 
@@ -18,7 +19,7 @@ cd claude-sync
 ./claude-sync init
 ```
 
-`init` symlinks the script to `~/.local/bin/`, then launches Claude with the init skill to configure SSH, run the first sync, and set up the SessionStart hook.
+`init` symlinks the script to `~/.local/bin/`, then launches Claude with the init skill to configure your sync backend (rsync or git), run the first sync, and set up the SessionStart hook.
 
 ## Commands
 
