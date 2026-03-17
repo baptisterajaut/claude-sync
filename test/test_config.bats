@@ -10,7 +10,7 @@ teardown() { teardown_test_env; }
     export CLAUDE_SYNC_CONFIG_DIR="$CONFIG_DIR"
     run bash ./claude-sync sync
     [ "$status" -ne 0 ]
-    [[ "$output" == *"config not found"* ]]
+    [[ "$output" == *"not configured"* ]]
 }
 
 @test "loads config from CLAUDE_SYNC_CONFIG_DIR" {
