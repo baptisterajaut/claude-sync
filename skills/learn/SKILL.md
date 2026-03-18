@@ -48,3 +48,13 @@ For each promotion the user approves:
 2. If the **entire** memory file was promoted, offer to delete it and update the project's MEMORY.md index
 
 Do NOT delete a memory file if only part of it was promoted.
+
+## Step 6: Sync
+
+If any files were modified in step 5 (edits to CLAUDE.md, deleted memory files, updated MEMORY.md):
+
+```bash
+claude-sync sync
+```
+
+If the sync succeeds, you're done. If it reports conflicts, invoke `/claude-sync:fix` to resolve them, then re-run `claude-sync sync` to confirm everything is in sync.
