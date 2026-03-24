@@ -315,6 +315,7 @@ build_file_union() {
 cmd_status() {
     fetch_all_local_checksums
     fetch_remote_checksums_readonly
+    override_settings_checksums
     local synclist
     synclist=$(load_synclist)
     local all_files
@@ -476,6 +477,82 @@ filter_excluded_plugins() {
     echo "$filtered" > "$plugins_list"
 }
 
+# Build JSON array from plugins.exclude (one element per non-comment line).
+# Prints the array to stdout. Returns 1 if empty.
+_build_exclude_jq_arr() {
+    local exclude_file="$CONFIG_DIR/plugins.exclude"
+    [[ -f "$exclude_file" ]] || return 1
+    local excludes
+    excludes=$(grep -v '^#' "$exclude_file" | grep -v '^$') || true
+    [[ -n "$excludes" ]] || return 1
+    local jq_arr='[]'
+    while IFS= read -r plugin; do
+        [[ -z "$plugin" ]] && continue
+        jq_arr=$(printf '%s' "$jq_arr" | jq --arg p "$plugin" '. + [$p]')
+    done <<< "$excludes"
+    echo "$jq_arr"
+}
+
+# Compute md5 of a settings.json file with excluded plugins stripped.
+# Normalizes through jq --sort-keys so format differences don't matter.
+# Prints the hash to stdout. Returns 1 if file missing or jq unavailable.
+_filtered_settings_hash() {
+    local file="$1"
+    [[ -f "$file" ]] || return 1
+    command -v jq >/dev/null 2>&1 || return 1
+    local jq_arr
+    jq_arr=$(_build_exclude_jq_arr) || return 1
+    jq --sort-keys --argjson excl "$jq_arr" \
+        'if .enabledPlugins then .enabledPlugins |= with_entries(select(.key as $k | $excl | index($k) | not)) else . end' \
+        "$file" 2>/dev/null | md5sum | awk '{print $1}'
+}
+
+# Override settings.json checksums with filtered+normalized versions.
+# Call after fetch_all_local_checksums AND fetch_remote_checksums.
+# Does not modify any permanent files.
+override_settings_checksums() {
+    command -v jq >/dev/null 2>&1 || return 0
+    _build_exclude_jq_arr >/dev/null 2>&1 || return 0
+    local h
+    if h=$(_filtered_settings_hash "$CLAUDE_DIR/settings.json"); then
+        LOCAL_CHECKSUMS["settings.json"]="$h"
+    fi
+    if h=$(_filtered_settings_hash "$LAST_SYNC_DIR/settings.json"); then
+        BASE_CHECKSUMS["settings.json"]="$h"
+    fi
+    # Also normalize remote checksum
+    local remote_hash="${REMOTE_CHECKSUMS[settings.json]:-ABSENT}"
+    [[ "$remote_hash" != "ABSENT" ]] || return 0
+    local remote_file
+    if [[ -z "${REMOTE_HOST:-}" ]]; then
+        remote_file="$REMOTE_PATH/settings.json"
+    else
+        remote_file=$(mktemp)
+        if ! rsync -a -e "$RSYNC_SSH" "$REMOTE_HOST:$REMOTE_PATH/settings.json" "$remote_file" 2>/dev/null; then
+            rm -f "$remote_file"; return 0
+        fi
+    fi
+    if h=$(_filtered_settings_hash "$remote_file"); then
+        REMOTE_CHECKSUMS["settings.json"]="$h"
+    fi
+    [[ -z "${REMOTE_HOST:-}" ]] || rm -f "$remote_file"
+}
+
+# Strip excluded plugins from enabledPlugins in settings.json (in place).
+# No-op if jq missing, no exclude file, or no enabledPlugins key.
+filter_excluded_from_settings() {
+    local settings="$CLAUDE_DIR/settings.json"
+    [[ -f "$settings" ]] || return 0
+    command -v jq >/dev/null 2>&1 || return 0
+    jq -e '.enabledPlugins' "$settings" >/dev/null 2>&1 || return 0
+    local jq_arr
+    jq_arr=$(_build_exclude_jq_arr) || return 0
+
+    jq --sort-keys --argjson excl "$jq_arr" \
+        '.enabledPlugins |= with_entries(select(.key as $k | $excl | index($k) | not))' \
+        "$settings" > "$settings.tmp" && mv "$settings.tmp" "$settings"
+}
+
 # Merge plugins.list: always auto-merge, never conflicts.
 # Plugins are binary (installed/not) — apply all additions and removals from both sides.
 # Returns: "clean" or "merged"
@@ -626,6 +703,8 @@ cmd_sync() {
 
     # Pre-compute all local + base checksums in one pass
     fetch_all_local_checksums
+    # Override settings.json checksums with excluded plugins stripped
+    override_settings_checksums
 
     local synclist all_files
     synclist=$(load_synclist)
@@ -687,16 +766,49 @@ cmd_sync() {
     fi
 
     # Phase 4: Batch transfers
+    # If pushing settings.json, temporarily filter it (strip excluded plugins)
+    local _settings_backup=""
     if [[ -n "$push_list" ]]; then
+        if echo "$push_list" | grep -qFx "settings.json"; then
+            local settings="$CLAUDE_DIR/settings.json"
+            _settings_backup=$(cat "$settings")
+            filter_excluded_from_settings
+        fi
         local push_file="$tmpdir/push_list"
         echo "$push_list" | sed '/^$/d' > "$push_file"
         batch_push "$push_file"
+        # Restore original settings.json after push
+        if [[ -n "$_settings_backup" ]]; then
+            echo "$_settings_backup" > "$CLAUDE_DIR/settings.json"
+        fi
         echo "$push_list" | sed '/^$/d' | sed 's/^/pushed: /'
     fi
     if [[ -n "$pull_list" ]]; then
+        # Save locally-excluded plugin entries before pull overwrites them
+        local _excluded_entries=""
+        if echo "$pull_list" | grep -qFx "settings.json"; then
+            local settings="$CLAUDE_DIR/settings.json"
+            if [[ -f "$settings" ]] && command -v jq >/dev/null 2>&1; then
+                local jq_arr
+                if jq_arr=$(_build_exclude_jq_arr); then
+                    _excluded_entries=$(jq --argjson excl "$jq_arr" \
+                        '.enabledPlugins | with_entries(select(.key as $k | $excl | index($k)))' \
+                        "$settings" 2>/dev/null) || true
+                    [[ "$_excluded_entries" != "{}" ]] || _excluded_entries=""
+                fi
+            fi
+        fi
         local pull_file="$tmpdir/pull_list"
         echo "$pull_list" | sed '/^$/d' > "$pull_file"
         batch_pull "$pull_file"
+        # Strip excluded plugins from pulled settings.json, then re-add local ones
+        filter_excluded_from_settings
+        if [[ -n "$_excluded_entries" ]]; then
+            local settings="$CLAUDE_DIR/settings.json"
+            jq --sort-keys --argjson excl "$_excluded_entries" \
+                '.enabledPlugins += $excl' \
+                "$settings" > "$settings.tmp" && mv "$settings.tmp" "$settings"
+        fi
         echo "$pull_list" | sed '/^$/d' | sed 's/^/pulled: /'
     fi
     if [[ -n "$delete_local_list" ]]; then
@@ -739,6 +851,16 @@ cmd_sync() {
         [[ -z "$filepath" ]] && continue
         update_base_from_local "$filepath"
     done <<< "$base_update_list"
+    # Base settings.json must match the filtered version (what remote has)
+    local base_settings="$LAST_SYNC_DIR/settings.json"
+    if [[ -f "$base_settings" ]] && command -v jq >/dev/null 2>&1; then
+        local jq_arr
+        if jq_arr=$(_build_exclude_jq_arr); then
+            jq --sort-keys --argjson excl "$jq_arr" \
+                'if .enabledPlugins then .enabledPlugins |= with_entries(select(.key as $k | $excl | index($k) | not)) else . end' \
+                "$base_settings" > "$base_settings.tmp" && mv "$base_settings.tmp" "$base_settings"
+        fi
+    fi
     while IFS= read -r filepath; do
         [[ -z "$filepath" ]] && continue
         remove_from_base "$filepath"
@@ -849,6 +971,7 @@ cmd_sync() {
 cmd_diff() {
     fetch_all_local_checksums
     fetch_remote_checksums_readonly
+    override_settings_checksums
     local synclist all_files
     synclist=$(load_synclist)
     all_files=$(build_file_union "$synclist")

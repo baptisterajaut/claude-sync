@@ -39,6 +39,7 @@ Use `--dry-run` / `-n` with `sync` to preview without applying.
 ## Prerequisites
 
 - **bash** (>= 4.0)
+- **jq** — required for `plugins.exclude` filtering of `settings.json` (gracefully skipped if absent)
 - Pick a sync backend:
   - **git mode** — `git` + a private repo (GitHub, GitLab, Gitea, your own dotfiles repo)
   - **rsync mode** — `rsync` + `ssh` + any server with SSH access (a Raspberry Pi, a VPS, a NAS, your prod server if you're feeling adventurous)

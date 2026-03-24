@@ -154,3 +154,94 @@ MOCK
     # But exclude file should still have been written
     grep -qFx "my-plugin@marketplace" "$CONFIG_DIR/plugins.exclude"
 }
+
+# --- settings.json enabledPlugins filtering ---
+
+@test "plugins exclude: excluded plugin stripped from settings.json on push" {
+    echo "settings.json" > "$CONFIG_DIR/synclist"
+    cat > "$LOCAL_DIR/settings.json" <<'EOF'
+{"enabledPlugins":{"pluginA@market":true,"pluginB@market":true},"other":"value"}
+EOF
+    echo "pluginB@market" > "$CONFIG_DIR/plugins.exclude"
+    # No remote settings.json yet — will push
+    run bash ./claude-sync sync
+    [ "$status" -eq 0 ]
+    # Remote should not have the excluded plugin
+    run jq -r '.enabledPlugins | keys[]' "$REMOTE_DIR/settings.json"
+    [[ "$output" == "pluginA@market" ]]
+    # Local should still have it (restored)
+    run jq -r '.enabledPlugins | keys[]' "$LOCAL_DIR/settings.json"
+    [[ "$output" == *"pluginA@market"* ]]
+    [[ "$output" == *"pluginB@market"* ]]
+}
+
+@test "plugins exclude: excluded plugin not pulled from remote settings.json" {
+    echo "settings.json" > "$CONFIG_DIR/synclist"
+    # Local has no plugins, remote has an excluded one
+    cat > "$LOCAL_DIR/settings.json" <<'EOF'
+{"enabledPlugins":{"pluginA@market":true}}
+EOF
+    cat > "$REMOTE_DIR/settings.json" <<'EOF'
+{"enabledPlugins":{"pluginA@market":true,"pluginB@market":true},"extra":"data"}
+EOF
+    cp "$LOCAL_DIR/settings.json" "$BASE_DIR/settings.json"
+    echo "pluginB@market" > "$CONFIG_DIR/plugins.exclude"
+    run bash ./claude-sync sync
+    [ "$status" -eq 0 ]
+    # Local should not have the excluded plugin from remote (it was never local)
+    local keys
+    keys=$(jq -r '.enabledPlugins | keys[]' "$LOCAL_DIR/settings.json")
+    [[ "$keys" == "pluginA@market" ]]
+    # But should have the extra data from remote
+    run jq -r '.extra' "$LOCAL_DIR/settings.json"
+    [[ "$output" == "data" ]]
+}
+
+@test "plugins exclude: local excluded plugin preserved after pull" {
+    echo "settings.json" > "$CONFIG_DIR/synclist"
+    # Local has excluded plugin + pluginA, remote changed pluginA's sibling
+    cat > "$LOCAL_DIR/settings.json" <<'EOF'
+{"enabledPlugins":{"pluginA@market":true,"localOnly@market":true}}
+EOF
+    cat > "$BASE_DIR/settings.json" <<'EOF'
+{"enabledPlugins":{"pluginA@market":true}}
+EOF
+    cat > "$REMOTE_DIR/settings.json" <<'EOF'
+{"enabledPlugins":{"pluginA@market":true},"newField":"yes"}
+EOF
+    echo "localOnly@market" > "$CONFIG_DIR/plugins.exclude"
+    run bash ./claude-sync sync
+    [ "$status" -eq 0 ]
+    # localOnly should still be in local (restored after sync)
+    run jq -r '.enabledPlugins["localOnly@market"]' "$LOCAL_DIR/settings.json"
+    [[ "$output" == "true" ]]
+    # newField should have been pulled
+    run jq -r '.newField' "$LOCAL_DIR/settings.json"
+    [[ "$output" == "yes" ]]
+}
+
+@test "plugins exclude: no jq — settings.json synced as-is" {
+    echo "settings.json" > "$CONFIG_DIR/synclist"
+    cat > "$LOCAL_DIR/settings.json" <<'EOF'
+{"enabledPlugins":{"pluginA@market":true,"pluginB@market":true}}
+EOF
+    echo "pluginB@market" > "$CONFIG_DIR/plugins.exclude"
+    # Shadow jq with a script that exits 1 (command -v still finds it, but it fails)
+    mkdir -p "$TEST_DIR/nojq"
+    printf '#!/bin/sh\nexit 127\n' > "$TEST_DIR/nojq/jq"
+    chmod +x "$TEST_DIR/nojq/jq"
+    run env PATH="$TEST_DIR/nojq:$PATH" bash ./claude-sync sync
+    [ "$status" -eq 0 ]
+    # Without working jq, filtering is skipped — remote gets everything
+    grep -q "pluginB@market" "$REMOTE_DIR/settings.json"
+}
+
+@test "plugins exclude: no enabledPlugins key — no error" {
+    echo "settings.json" > "$CONFIG_DIR/synclist"
+    cat > "$LOCAL_DIR/settings.json" <<'EOF'
+{"someOther":"config"}
+EOF
+    echo "pluginB@market" > "$CONFIG_DIR/plugins.exclude"
+    run bash ./claude-sync sync
+    [ "$status" -eq 0 ]
+}
