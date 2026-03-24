@@ -32,6 +32,7 @@ Commands:
     fix       Launch Claude to resolve sync conflicts
     resolve [files...]  Accept local version for conflicting files (local → remote + base)
     learn     Review project memories and promote to global CLAUDE.md
+    install-local <plugin>  Install a plugin locally only (excluded from sync)
 
 Options:
     -n, --dry-run   Preview actions without applying (sync)
@@ -443,9 +444,36 @@ remove_from_base() {
 generate_plugins_list() {
     local installed="$CLAUDE_DIR/plugins/installed_plugins.json"
     local plugins_list="$CLAUDE_DIR/plugins.list"
+    local exclude_file="$CONFIG_DIR/plugins.exclude"
     if [[ -f "$installed" ]]; then
-        grep -oP '"[^"]+@[^"]+"' "$installed" | tr -d '"' | sort -u > "$plugins_list"
+        local raw
+        raw=$(grep -oP '"[^"]+@[^"]+"' "$installed" | tr -d '"' | sort -u)
+        if [[ -f "$exclude_file" ]]; then
+            local excludes
+            excludes=$(grep -v '^#' "$exclude_file" | grep -v '^$' | sort -u) || true
+            if [[ -n "$excludes" ]]; then
+                echo "$raw" | grep -vFxf <(echo "$excludes") > "$plugins_list" || true
+            else
+                echo "$raw" > "$plugins_list"
+            fi
+        else
+            echo "$raw" > "$plugins_list"
+        fi
     fi
+}
+
+# Remove excluded plugins from plugins.list (post-merge filtering).
+# Called after merge to strip any excluded plugin that came in from remote.
+filter_excluded_plugins() {
+    local plugins_list="$CLAUDE_DIR/plugins.list"
+    local exclude_file="$CONFIG_DIR/plugins.exclude"
+    [[ -f "$plugins_list" && -f "$exclude_file" ]] || return 0
+    local excludes
+    excludes=$(grep -v '^#' "$exclude_file" | grep -v '^$' | sort -u) || true
+    [[ -n "$excludes" ]] || return 0
+    local filtered
+    filtered=$(grep -vFxf <(echo "$excludes") "$plugins_list") || true
+    echo "$filtered" > "$plugins_list"
 }
 
 # Merge plugins.list: always auto-merge, never conflicts.
@@ -742,6 +770,7 @@ cmd_sync() {
     if [[ -n "$remote_plugins_file" && -f "$remote_plugins_file" ]]; then
         local merge_result
         merge_result=$(merge_plugins_list "$remote_plugins_file")
+        filter_excluded_plugins
         case "$merge_result" in
             clean) ;;
             merged)
@@ -1078,6 +1107,30 @@ cmd_init() {
 
 # --- Launch Claude with a skill ---
 
+cmd_install_local() {
+    local plugin="${1:-}"
+    if [[ -z "$plugin" ]]; then
+        echo "error: usage: claude-sync install-local <plugin>" >&2
+        exit 1
+    fi
+    local exclude_file="$CONFIG_DIR/plugins.exclude"
+    mkdir -p "$CONFIG_DIR"
+    # Add to exclude list if not already present
+    if [[ -f "$exclude_file" ]] && grep -qFx "$plugin" "$exclude_file"; then
+        echo "Already excluded: $plugin"
+    else
+        echo "$plugin" >> "$exclude_file"
+        echo "Excluded from sync: $plugin"
+    fi
+    # Install via claude CLI
+    if command -v claude >/dev/null 2>&1; then
+        claude plugin install "$plugin" --scope user
+    else
+        echo "error: claude CLI not found — plugin excluded but not installed" >&2
+        exit 1
+    fi
+}
+
 cmd_launch_skill() {
     local skill_name="$1"
     local real_script
@@ -1162,6 +1215,7 @@ case "$COMMAND" in
     fix)     cmd_launch_skill "fix" ;;
     learn)   cmd_launch_skill "learn" ;;
     resolve) load_config; cmd_resolve "$@" ;;
+    install-local) load_config; cmd_install_local "$@" ;;
     "")      usage; exit 1 ;;
     *)      echo "error: unknown command '$COMMAND'" >&2; exit 1 ;;
 esac
