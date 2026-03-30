@@ -833,7 +833,12 @@ cmd_sync() {
             while IFS= read -r filepath; do
                 [[ -z "$filepath" ]] && continue
                 local expected actual
-                expected=$(md5sum "$CLAUDE_DIR/$filepath" | awk '{print $1}')
+                if [[ "$filepath" == "settings.json" ]]; then
+                    expected=$(_filtered_settings_hash "$CLAUDE_DIR/$filepath" 2>/dev/null \
+                        || md5sum "$CLAUDE_DIR/$filepath" | awk '{print $1}')
+                else
+                    expected=$(md5sum "$CLAUDE_DIR/$filepath" | awk '{print $1}')
+                fi
                 actual=$(echo "$verify_output" | grep -F "$filepath" | awk '{print $1}')
                 if [[ "$expected" != "$actual" ]]; then
                     echo "error: integrity check failed for $filepath (push)" >&2
