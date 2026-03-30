@@ -445,10 +445,24 @@ remove_from_base() {
 generate_plugins_list() {
     local installed="$CLAUDE_DIR/plugins/installed_plugins.json"
     local plugins_list="$CLAUDE_DIR/plugins.list"
+    local settings="$CLAUDE_DIR/settings.json"
     local exclude_file="$CONFIG_DIR/plugins.exclude"
     if [[ -f "$installed" ]]; then
         local raw
         raw=$(grep -oP '"[^"]+@[^"]+"' "$installed" | tr -d '"' | sort -u)
+        # Only include plugins that are actually enabled in settings.json
+        # (uninstalled plugins may linger in installed_plugins.json)
+        if [[ -f "$settings" ]] && command -v jq >/dev/null 2>&1; then
+            if jq -e '.enabledPlugins' "$settings" >/dev/null 2>&1; then
+                local enabled
+                enabled=$(jq -r '.enabledPlugins | keys[]' "$settings" 2>/dev/null | sort -u) || true
+                if [[ -n "$enabled" ]]; then
+                    raw=$(comm -12 <(echo "$raw") <(echo "$enabled"))
+                else
+                    raw=""
+                fi
+            fi
+        fi
         if [[ -f "$exclude_file" ]]; then
             local excludes
             excludes=$(grep -v '^#' "$exclude_file" | grep -v '^$' | sort -u) || true
@@ -874,6 +888,7 @@ cmd_sync() {
     prune_old_backups
 
     local plugins_changed=false
+    local new_plugins=""
 
     # Phase 8: Merge plugins.list (handled separately — additive merge, not three-way)
     generate_plugins_list
@@ -911,8 +926,7 @@ cmd_sync() {
                     mkdir -p "$LAST_SYNC_DIR"
                     cp "$CLAUDE_DIR/plugins.list" "$LAST_SYNC_DIR/plugins.list"
                     echo "plugins.list: merged"
-                    # Show what's new
-                    local new_plugins
+                    # Detect newly added plugins (from remote)
                     new_plugins=$(comm -13 <(echo "$pre_merge_plugins" | sort) <(sort "$CLAUDE_DIR/plugins.list"))
                     if [[ -n "$new_plugins" ]]; then
                         echo "$new_plugins" | sed 's/^/  new: /'
@@ -942,15 +956,16 @@ cmd_sync() {
 
     rm -rf "$tmpdir" 2>/dev/null || true
 
-    # Auto-install missing plugins if plugins.list changed
-    if $plugins_changed && ! $DRY_RUN && command -v claude >/dev/null 2>&1; then
-        echo "Installing missing plugins..." >&2
+    # Auto-install only newly added plugins (from remote merge)
+    if [[ -n "$new_plugins" ]] && ! $DRY_RUN && command -v claude >/dev/null 2>&1; then
         while IFS= read -r plugin; do
             [[ -z "$plugin" ]] && continue
-            claude plugin install "$plugin" --scope user 2>/dev/null && \
-                echo "  installed: $plugin" || \
-                echo "  skipped: $plugin" 2>/dev/null
-        done < "$CLAUDE_DIR/plugins.list"
+            if claude plugin install "$plugin" --scope user 2>/dev/null; then
+                echo "  installed: $plugin"
+            else
+                echo "  skipped: $plugin"
+            fi
+        done <<< "$new_plugins"
     fi
 
     # Git backend: commit + push changes to remote repo

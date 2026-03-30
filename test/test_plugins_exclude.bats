@@ -245,3 +245,60 @@ EOF
     run bash ./claude-sync sync
     [ "$status" -eq 0 ]
 }
+
+# --- enabledPlugins cross-reference ---
+
+@test "plugins: disabled plugin not in plugins.list" {
+    cat > "$LOCAL_DIR/plugins/installed_plugins.json" <<'EOF'
+[{"name": "pluginA@market"}, {"name": "pluginB@market"}, {"name": "pluginC@market"}]
+EOF
+    cat > "$LOCAL_DIR/settings.json" <<'EOF'
+{"enabledPlugins":{"pluginA@market":true,"pluginC@market":true}}
+EOF
+    run bash ./claude-sync sync
+    [ "$status" -eq 0 ]
+    grep -q "pluginA@market" "$LOCAL_DIR/plugins.list"
+    grep -q "pluginC@market" "$LOCAL_DIR/plugins.list"
+    ! grep -q "pluginB@market" "$LOCAL_DIR/plugins.list"
+}
+
+@test "plugins: uninstalled plugin removed from remote plugins.list" {
+    # Plugin was synced before (in base + remote), then uninstalled locally
+    cat > "$LOCAL_DIR/plugins/installed_plugins.json" <<'EOF'
+[{"name": "pluginA@market"}, {"name": "pluginB@market"}]
+EOF
+    cat > "$LOCAL_DIR/settings.json" <<'EOF'
+{"enabledPlugins":{"pluginA@market":true}}
+EOF
+    printf "pluginA@market\npluginB@market\n" > "$REMOTE_DIR/plugins.list"
+    printf "pluginA@market\npluginB@market\n" > "$BASE_DIR/plugins.list"
+    run bash ./claude-sync sync
+    [ "$status" -eq 0 ]
+    # pluginB should be gone from both local and remote
+    ! grep -q "pluginB@market" "$LOCAL_DIR/plugins.list"
+    ! grep -q "pluginB@market" "$REMOTE_DIR/plugins.list"
+}
+
+@test "plugins: no settings.json — all installed plugins in list" {
+    cat > "$LOCAL_DIR/plugins/installed_plugins.json" <<'EOF'
+[{"name": "pluginA@market"}, {"name": "pluginB@market"}]
+EOF
+    rm -f "$LOCAL_DIR/settings.json"
+    run bash ./claude-sync sync
+    [ "$status" -eq 0 ]
+    grep -q "pluginA@market" "$LOCAL_DIR/plugins.list"
+    grep -q "pluginB@market" "$LOCAL_DIR/plugins.list"
+}
+
+@test "plugins: no enabledPlugins key — all installed plugins in list" {
+    cat > "$LOCAL_DIR/plugins/installed_plugins.json" <<'EOF'
+[{"name": "pluginA@market"}, {"name": "pluginB@market"}]
+EOF
+    cat > "$LOCAL_DIR/settings.json" <<'EOF'
+{"someOther":"config"}
+EOF
+    run bash ./claude-sync sync
+    [ "$status" -eq 0 ]
+    grep -q "pluginA@market" "$LOCAL_DIR/plugins.list"
+    grep -q "pluginB@market" "$LOCAL_DIR/plugins.list"
+}
