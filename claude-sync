@@ -105,9 +105,12 @@ notify() {
     if command -v notify-send >/dev/null 2>&1; then
         notify-send "claude-sync" "$msg" || true
     elif command -v osascript >/dev/null 2>&1; then
-        osascript -e "display notification \"$msg\" with title \"claude-sync\"" || true
+        local escaped_msg="${msg//\\/\\\\}"
+        escaped_msg="${escaped_msg//\"/\\\"}"
+        osascript -e "display notification \"$escaped_msg\" with title \"claude-sync\"" || true
     elif command -v powershell.exe >/dev/null 2>&1; then
-        powershell.exe -Command "New-BurntToastNotification -Text 'claude-sync','$msg'" 2>/dev/null || true
+        local escaped_msg="${msg//\'/\'\'}"
+        powershell.exe -Command "New-BurntToastNotification -Text 'claude-sync','$escaped_msg'" 2>/dev/null || true
     fi
 }
 
@@ -167,6 +170,9 @@ enumerate_files() {
 is_excluded() {
     local path="$1"
     local pattern
+    # Prefix match: patterns ending in / match directory subtrees.
+    # Patterns without trailing / match as exact prefix — e.g. "foo" excludes "foobar".
+    # Always use trailing / for directory patterns to avoid false matches.
     while IFS= read -r pattern; do
         [[ -z "$pattern" ]] && continue
         if [[ "$path" == "$pattern"* ]]; then
@@ -634,16 +640,17 @@ merge_plugins_list() {
     fi
 
     # Three-way: base + additions - removals from both sides
+    # Use printf to avoid `echo ""` producing a phantom empty line for comm
     local added_locally added_remotely removed_locally removed_remotely
-    added_locally=$(comm -23 <(echo "$local_list") <(echo "$base_list"))
-    added_remotely=$(comm -23 <(echo "$remote_list") <(echo "$base_list"))
-    removed_locally=$(comm -23 <(echo "$base_list") <(echo "$local_list"))
-    removed_remotely=$(comm -23 <(echo "$base_list") <(echo "$remote_list"))
+    added_locally=$(comm -23 <(printf '%s\n' $local_list | sort) <(printf '%s\n' $base_list | sort))
+    added_remotely=$(comm -23 <(printf '%s\n' $remote_list | sort) <(printf '%s\n' $base_list | sort))
+    removed_locally=$(comm -23 <(printf '%s\n' $base_list | sort) <(printf '%s\n' $local_list | sort))
+    removed_remotely=$(comm -23 <(printf '%s\n' $base_list | sort) <(printf '%s\n' $remote_list | sort))
 
     local merged
-    merged=$({ echo "$base_list"; echo "$added_locally"; echo "$added_remotely"; } | grep -v '^$' | sort -u)
-    [[ -n "$removed_locally" ]] && merged=$(comm -23 <(echo "$merged") <(echo "$removed_locally"))
-    [[ -n "$removed_remotely" ]] && merged=$(comm -23 <(echo "$merged") <(echo "$removed_remotely"))
+    merged=$({ printf '%s\n' $base_list $added_locally $added_remotely; } | grep -v '^$' | sort -u)
+    [[ -n "$removed_locally" ]] && merged=$(comm -23 <(echo "$merged") <(printf '%s\n' $removed_locally | sort))
+    [[ -n "$removed_remotely" ]] && merged=$(comm -23 <(echo "$merged") <(printf '%s\n' $removed_remotely | sort))
 
     echo "$merged" | grep -v '^$' > "$local_file"
     echo "merged"
@@ -661,8 +668,10 @@ create_local_backup() {
     if [[ -n "$files" ]]; then
         local backup_file
         backup_file="$BACKUP_DIR/$(date -Iseconds).tar.gz"
-        # shellcheck disable=SC2086
-        tar -czf "$backup_file" -C "$CLAUDE_DIR" $files 2>/dev/null || true
+            local filelist="$BACKUP_DIR/.filelist.tmp"
+        echo "$files" > "$filelist"
+        tar -czf "$backup_file" -C "$CLAUDE_DIR" --files-from="$filelist" 2>/dev/null || true
+        rm -f "$filelist"
     fi
 }
 
@@ -901,7 +910,7 @@ cmd_sync() {
                 else
                     expected=$(md5sum "$CLAUDE_DIR/$filepath" | awk '{print $1}')
                 fi
-                actual=$(echo "$verify_output" | grep -F "$filepath" | awk '{print $1}')
+                actual=$(echo "$verify_output" | grep -F " $filepath" | awk '{print $1}')
                 if [[ "$expected" != "$actual" ]]; then
                     echo "error: integrity check failed for $filepath (push)" >&2
                 fi
