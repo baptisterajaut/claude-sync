@@ -19,10 +19,10 @@ setup() {
 
     # Rewrite config for git backend
     cat > "$CONFIG_DIR/config" <<EOF
-BACKEND="git"
-GIT_REPO="$GIT_CLONE"
-GIT_SUBDIR="$GIT_SUBDIR"
-CLAUDE_DIR="$LOCAL_DIR"
+BACKEND=git
+GIT_REPO=$GIT_CLONE
+GIT_SUBDIR=$GIT_SUBDIR
+CLAUDE_DIR=$LOCAL_DIR
 EOF
 }
 
@@ -166,6 +166,39 @@ teardown() { teardown_test_env; }
     local verify="$TEST_DIR/verify"
     git clone "$GIT_BARE" "$verify" >/dev/null 2>&1
     [ "$(cat "$verify/$GIT_SUBDIR/CLAUDE.md")" = "merged" ]
+}
+
+@test "git: deletion propagates to remote repo" {
+    export CLAUDE_SYNC_CONFIG_DIR="$CONFIG_DIR"
+    # Setup: file exists on both sides + base
+    mkdir -p "$LOCAL_DIR" "$BASE_DIR"
+    echo "content" > "$GIT_CLONE/$GIT_SUBDIR/to-delete.md"
+    echo "content" > "$LOCAL_DIR/to-delete.md"
+    echo "content" > "$BASE_DIR/to-delete.md"
+    # Also have a file that stays (so there's always something to sync)
+    echo "stays" > "$GIT_CLONE/$GIT_SUBDIR/CLAUDE.md"
+    echo "stays" > "$LOCAL_DIR/CLAUDE.md"
+    echo "stays" > "$BASE_DIR/CLAUDE.md"
+    # Commit initial state to git
+    git -C "$GIT_CLONE" add . >/dev/null 2>&1
+    git -C "$GIT_CLONE" commit -m "initial" >/dev/null 2>&1
+    git -C "$GIT_CLONE" push >/dev/null 2>&1
+    # Delete locally
+    rm "$LOCAL_DIR/to-delete.md"
+    # Add to-delete.md to synclist
+    echo "to-delete.md" > "$CONFIG_DIR/synclist"
+    echo "CLAUDE.md" >> "$CONFIG_DIR/synclist"
+    # Sync
+    run bash ./claude-sync sync
+    echo "$output"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"deleted remote"* ]]
+    # Verify file is gone from remote/working tree
+    [ ! -f "$GIT_CLONE/$GIT_SUBDIR/to-delete.md" ]
+    # Verify file is gone from git history (committed)
+    local git_files
+    git_files=$(git -C "$GIT_CLONE" ls-files "$GIT_SUBDIR")
+    [[ "$git_files" != *"to-delete.md"* ]]
 }
 
 @test "git: status does not fetch (read-only)" {
