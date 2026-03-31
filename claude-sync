@@ -58,6 +58,11 @@ load_config() {
         value="${value%"${value##*[![:space:]]}"}"  # strip trailing whitespace
         value="${value#\"}" ; value="${value%\"}"    # strip double quotes
         value="${value#\'}" ; value="${value%\'}"    # strip single quotes
+        # Expand common shell variables (safe: only known env vars, no command execution)
+        value="${value//\$HOME/$HOME}"
+        value="${value//\$\{HOME\}/$HOME}"
+        value="${value//\$USER/${USER:-}}"
+        value="${value//\$\{USER\}/${USER:-}}"
         case "$key" in
             CLAUDE_DIR|REMOTE_HOST|REMOTE_PATH|SSH_PORT|BACKEND|GIT_REPO|GIT_SUBDIR)
                 declare -g "$key=$value" ;;
@@ -109,20 +114,18 @@ notify() {
 # --- Locking ---
 
 acquire_local_lock() {
-    if [[ -f "$LOCK_FILE" ]]; then
-        read -r existing_pid _ < "$LOCK_FILE"
-        if kill -0 "$existing_pid" 2>/dev/null; then
-            echo "error: claude-sync already running (PID $existing_pid)" >&2
-            return 1
-        fi
-        echo "warning: reclaiming stale lock from PID $existing_pid" >&2
-        rm -f "$LOCK_FILE"
+    mkdir -p "$(dirname "$LOCK_FILE")"
+    exec 9>"$LOCK_FILE"
+    if ! flock -n 9; then
+        echo "error: claude-sync already running" >&2
+        return 1
     fi
-    echo "$$ $(date +%s)" > "$LOCK_FILE"
+    echo "$$ $(date +%s)" >&9
     trap release_local_lock EXIT
 }
 
 release_local_lock() {
+    flock -u 9 2>/dev/null || true
     rm -f "$LOCK_FILE"
 }
 
@@ -480,7 +483,7 @@ generate_plugins_list() {
     local exclude_file="$CONFIG_DIR/plugins.exclude"
     if [[ -f "$installed" ]]; then
         local raw
-        raw=$(grep -oP '"[^"]+@[^"]+"' "$installed" | tr -d '"' | sort -u)
+        raw=$(grep -o '"[^"]*@[^"]*"' "$installed" | tr -d '"' | sort -u)
         # Only include plugins that are actually enabled in settings.json
         # (uninstalled plugins may linger in installed_plugins.json)
         if [[ -f "$settings" ]] && command -v jq >/dev/null 2>&1; then
@@ -773,6 +776,11 @@ cmd_sync() {
     local base_update_list="" base_remove_list="" conflict_list=""
     local tmpdir
     tmpdir=$(mktemp -d)
+    if [[ "$BACKEND" != "git" ]]; then
+        trap "rm -rf '$tmpdir'; release_remote_lock; release_local_lock" EXIT
+    else
+        trap "rm -rf '$tmpdir'" EXIT
+    fi
 
     while IFS= read -r filepath; do
         [[ -z "$filepath" ]] && continue
@@ -1065,6 +1073,7 @@ cmd_diff() {
     # Fetch remote versions of changed files to a temp dir
     local tmpdir
     tmpdir=$(mktemp -d)
+    trap "rm -rf '$tmpdir'" EXIT
     local fetch_list="$tmpdir/fetch_list"
     echo "$changed_files" | sed '/^$/d' > "$fetch_list"
 
@@ -1141,6 +1150,11 @@ cmd_resolve() {
     local resolved_count=0
     local tmpdir
     tmpdir=$(mktemp -d)
+    if [[ "$BACKEND" != "git" ]]; then
+        trap "rm -rf '$tmpdir'; release_remote_lock; release_local_lock" EXIT
+    else
+        trap "rm -rf '$tmpdir'" EXIT
+    fi
     local push_file="$tmpdir/push_list"
     : > "$push_file"
 
@@ -1354,7 +1368,11 @@ git_pre_sync() {
     fi
     if [[ -n "$remote_branch" ]]; then
         # Fast-forward to remote HEAD so post_sync commits on top of it
-        git -C "$GIT_REPO" -c core.hooksPath=/dev/null reset --hard "$remote_branch" >/dev/null 2>&1 || true
+        # Use merge --ff-only instead of reset --hard to avoid destroying work outside GIT_SUBDIR
+        git -C "$GIT_REPO" -c core.hooksPath=/dev/null merge --ff-only "$remote_branch" >/dev/null 2>&1 || {
+            echo "error: git repo has diverged from remote, manual resolution needed" >&2
+            return 1
+        }
     fi
 }
 

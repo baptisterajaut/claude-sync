@@ -81,6 +81,19 @@ HEREDOC
     [ ! -f "$marker" ]
 }
 
+@test "config parser expands \$HOME in values" {
+    # Real configs commonly use $HOME instead of ~
+    cat > "$CONFIG_DIR/config" <<'HEREDOC'
+CLAUDE_DIR=$HOME/.claude
+REMOTE_HOST=
+REMOTE_PATH=/tmp/remote
+HEREDOC
+    export CLAUDE_SYNC_CONFIG_DIR="$CONFIG_DIR"
+    source ./claude-sync --source-only
+    load_config
+    [ "$CLAUDE_DIR" = "$HOME/.claude" ]
+}
+
 @test "config parser handles tilde expansion in CLAUDE_DIR" {
     cat > "$CONFIG_DIR/config" <<EOF
 CLAUDE_DIR=~/test-dir
