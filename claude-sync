@@ -1074,55 +1074,107 @@ cmd_diff() {
         fi
     done <<< "$all_files"
 
-    if [[ -z "$changed_files" ]]; then
-        echo "No differences found."
-        return 0
-    fi
+    # Show diffs for changed synclist files
+    if [[ -n "$changed_files" ]]; then
+        local tmpdir
+        tmpdir=$(mktemp -d)
+        trap "rm -rf '$tmpdir'" EXIT
+        local fetch_list="$tmpdir/fetch_list"
+        echo "$changed_files" | sed '/^$/d' > "$fetch_list"
 
-    # Fetch remote versions of changed files to a temp dir
-    local tmpdir
-    tmpdir=$(mktemp -d)
-    trap "rm -rf '$tmpdir'" EXIT
-    local fetch_list="$tmpdir/fetch_list"
-    echo "$changed_files" | sed '/^$/d' > "$fetch_list"
-
-    if [[ -z "${REMOTE_HOST:-}" ]]; then
-        # Local mode: copy from REMOTE_PATH
-        while IFS= read -r f; do
-            [[ -z "$f" ]] && continue
-            if [[ -f "$REMOTE_PATH/$f" ]]; then
-                mkdir -p "$(dirname "$tmpdir/remote/$f")"
-                cp "$REMOTE_PATH/$f" "$tmpdir/remote/$f"
-            fi
-        done < "$fetch_list"
-    else
-        rsync -a --safe-links -e "$RSYNC_SSH" --files-from="$fetch_list" "$REMOTE_HOST:$REMOTE_PATH/" "$tmpdir/remote/" 2>/dev/null || true
-    fi
-
-    while IFS= read -r filepath; do
-        [[ -z "$filepath" ]] && continue
-        local action="${file_actions[$filepath]}"
-        local local_file="$CLAUDE_DIR/$filepath"
-        local remote_file="$tmpdir/remote/$filepath"
-
-        local local_hash remote_hash
-        _hash_get LOCAL_CHECKSUMS "$filepath" local_hash
-        _hash_get REMOTE_CHECKSUMS "$filepath" remote_hash
-
-        echo "=== $filepath ($action) ==="
-        if [[ "$local_hash" == "ABSENT" ]]; then
-            echo "(local: absent, remote: exists)"
-            cat "$remote_file" 2>/dev/null || true
-        elif [[ "$remote_hash" == "ABSENT" ]]; then
-            echo "(local: exists, remote: absent)"
-            cat "$local_file"
+        if [[ -z "${REMOTE_HOST:-}" ]]; then
+            while IFS= read -r f; do
+                [[ -z "$f" ]] && continue
+                if [[ -f "$REMOTE_PATH/$f" ]]; then
+                    mkdir -p "$(dirname "$tmpdir/remote/$f")"
+                    cp "$REMOTE_PATH/$f" "$tmpdir/remote/$f"
+                fi
+            done < "$fetch_list"
         else
-            diff -u --label "local/$filepath" "$local_file" --label "remote/$filepath" "$remote_file" || true
+            rsync -a --safe-links -e "$RSYNC_SSH" --files-from="$fetch_list" "$REMOTE_HOST:$REMOTE_PATH/" "$tmpdir/remote/" 2>/dev/null || true
+        fi
+
+        while IFS= read -r filepath; do
+            [[ -z "$filepath" ]] && continue
+            local action="${file_actions[$filepath]}"
+            local local_file="$CLAUDE_DIR/$filepath"
+            local remote_file="$tmpdir/remote/$filepath"
+
+            local local_hash remote_hash
+            _hash_get LOCAL_CHECKSUMS "$filepath" local_hash
+            _hash_get REMOTE_CHECKSUMS "$filepath" remote_hash
+
+            echo "=== $filepath ($action) ==="
+            if [[ "$local_hash" == "ABSENT" ]]; then
+                echo "(local: absent, remote: exists)"
+                cat "$remote_file" 2>/dev/null || true
+            elif [[ "$remote_hash" == "ABSENT" ]]; then
+                echo "(local: exists, remote: absent)"
+                cat "$local_file"
+            else
+                echo "(- local / + remote)"
+                diff -u --label "local/$filepath" "$local_file" --label "remote/$filepath" "$remote_file" || true
+            fi
+            echo ""
+        done <<< "$changed_files"
+
+        rm -rf "$tmpdir"
+    fi
+
+    # Show plugins.list merge preview (not in synclist, managed separately)
+    generate_plugins_list
+    local local_plugins="" base_plugins="" remote_plugins=""
+    [[ -f "$CLAUDE_DIR/plugins.list" ]] && local_plugins=$(sort -u "$CLAUDE_DIR/plugins.list")
+    [[ -f "$LAST_SYNC_DIR/plugins.list" ]] && base_plugins=$(sort -u "$LAST_SYNC_DIR/plugins.list")
+
+    local remote_pl_hash
+    _hash_get REMOTE_CHECKSUMS "plugins.list" remote_pl_hash
+    if [[ "$remote_pl_hash" != "ABSENT" ]]; then
+        if [[ -z "${REMOTE_HOST:-}" ]]; then
+            [[ -f "$REMOTE_PATH/plugins.list" ]] && remote_plugins=$(sort -u "$REMOTE_PATH/plugins.list")
+        else
+            remote_plugins=$("${SSH_CMD[@]}" "$REMOTE_HOST" "sort -u \"$REMOTE_PATH/plugins.list\" 2>/dev/null" || true)
+        fi
+    fi
+
+    if [[ -n "$local_plugins" || -n "$remote_plugins" ]] && [[ "$local_plugins" != "$remote_plugins" ]]; then
+        echo "=== plugins.list (mergeable) ==="
+        if [[ -z "$remote_plugins" ]]; then
+            echo "(new-local, would push)"
+            echo "$local_plugins"
+        elif [[ -z "$local_plugins" ]]; then
+            echo "(new-remote, would pull)"
+            echo "$remote_plugins"
+        elif [[ -z "$base_plugins" ]]; then
+            echo "(no base — would union)"
+            echo "  local only:"
+            comm -23 <(echo "$local_plugins") <(echo "$remote_plugins") | sed 's/^/    + /'
+            echo "  remote only:"
+            comm -13 <(echo "$local_plugins") <(echo "$remote_plugins") | sed 's/^/    + /'
+        else
+            local added_locally added_remotely removed_locally removed_remotely
+            added_locally=$(comm -23 <(printf '%s\n' $local_plugins | sort) <(printf '%s\n' $base_plugins | sort))
+            added_remotely=$(comm -23 <(printf '%s\n' $remote_plugins | sort) <(printf '%s\n' $base_plugins | sort))
+            removed_locally=$(comm -23 <(printf '%s\n' $base_plugins | sort) <(printf '%s\n' $local_plugins | sort))
+            removed_remotely=$(comm -23 <(printf '%s\n' $base_plugins | sort) <(printf '%s\n' $remote_plugins | sort))
+
+            [[ -n "$added_locally" ]] && { echo "  added locally:"; echo "$added_locally" | sed 's/^/    + /'; }
+            [[ -n "$added_remotely" ]] && { echo "  added remotely:"; echo "$added_remotely" | sed 's/^/    + /'; }
+            [[ -n "$removed_locally" ]] && { echo "  removed locally:"; echo "$removed_locally" | sed 's/^/    - /'; }
+            [[ -n "$removed_remotely" ]] && { echo "  removed remotely:"; echo "$removed_remotely" | sed 's/^/    - /'; }
+
+            local merged
+            merged=$({ printf '%s\n' $base_plugins $added_locally $added_remotely; } | grep -v '^$' | sort -u)
+            [[ -n "$removed_locally" ]] && merged=$(comm -23 <(echo "$merged") <(printf '%s\n' $removed_locally | sort))
+            [[ -n "$removed_remotely" ]] && merged=$(comm -23 <(echo "$merged") <(printf '%s\n' $removed_remotely | sort))
+
+            echo "  merge result:"
+            echo "$merged" | sed 's/^/    /'
         fi
         echo ""
-    done <<< "$changed_files"
-
-    rm -rf "$tmpdir"
+    elif [[ -z "$changed_files" ]]; then
+        echo "No differences found."
+    fi
 }
 
 # --- Resolve command ---

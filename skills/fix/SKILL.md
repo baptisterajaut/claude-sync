@@ -40,15 +40,19 @@ Read `/tmp/claude-sync-diff.txt` to understand all differences. Identify files m
 
 7. Once approved, apply the merge to the local file using the Edit or Write tool.
 
-## Step 3: Push resolved files
+## Step 3: Finalize
 
-After ALL conflicts are resolved locally:
+After editing a conflicting file locally, the conflict may already be resolved (e.g. the local version now matches the remote). In that case, `resolve` will report "not in conflict" — this is expected. Run `sync` directly instead:
+
+```bash
+claude-sync sync
+```
+
+If the file still differs from remote after your edit, push the resolved version explicitly:
 
 ```bash
 claude-sync resolve <file1> <file2> ...
 ```
-
-Pass the exact file paths that were resolved (relative to `~/.claude/`). Only those files will be pushed. Files not in conflict will error.
 
 Then verify:
 
