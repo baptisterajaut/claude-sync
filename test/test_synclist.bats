@@ -12,6 +12,26 @@ teardown() { teardown_test_env; }
     [[ "$result" == *"CLAUDE.md"* ]]
     [[ "$result" == *"settings.json"* ]]
     [[ "$result" == *"skills/"* ]]
+    [[ "$result" == *"ccstatusline/"* ]]
+}
+
+@test "enumerate_files skips missing ccstatusline directory" {
+    export CLAUDE_SYNC_CONFIG_DIR="$CONFIG_DIR"
+    source ./claude-sync --source-only
+    echo "test" > "$LOCAL_DIR/CLAUDE.md"
+    result=$(enumerate_files "$LOCAL_DIR" "CLAUDE.md
+ccstatusline/")
+    [[ "$result" == *"CLAUDE.md"* ]]
+    [[ "$result" != *"ccstatusline"* ]]
+}
+
+@test "enumerate_files includes ccstatusline settings when present" {
+    export CLAUDE_SYNC_CONFIG_DIR="$CONFIG_DIR"
+    source ./claude-sync --source-only
+    mkdir -p "$LOCAL_DIR/ccstatusline"
+    echo "{}" > "$LOCAL_DIR/ccstatusline/settings.json"
+    result=$(enumerate_files "$LOCAL_DIR" "ccstatusline/")
+    [[ "$result" == *"ccstatusline/settings.json"* ]]
 }
 
 @test "load_synclist reads custom synclist file" {

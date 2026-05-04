@@ -12,7 +12,8 @@ BACKUP_DIR="$CONFIG_DIR/backups"
 DEFAULT_SYNCLIST="CLAUDE.md
 settings.json
 skills/
-agents/"
+agents/
+ccstatusline/"
 
 EXCLUDE_PATTERNS="skills/claude-sync/"
 
