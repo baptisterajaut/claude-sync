@@ -65,7 +65,7 @@ load_config() {
         value="${value//\$USER/${USER:-}}"
         value="${value//\$\{USER\}/${USER:-}}"
         case "$key" in
-            CLAUDE_DIR|REMOTE_HOST|REMOTE_PATH|SSH_PORT|BACKEND|GIT_REPO|GIT_SUBDIR)
+            CLAUDE_DIR|REMOTE_HOST|REMOTE_PATH|SSH_PORT|SSH_CONNECT_TIMEOUT|BACKEND|GIT_REPO|GIT_SUBDIR)
                 declare -g "$key=$value" ;;
             *)  echo "warning: unknown config key '$key' in $CONFIG_FILE" >&2 ;;
         esac
@@ -85,8 +85,23 @@ load_config() {
         : "${REMOTE_PATH:?REMOTE_PATH not set in $CONFIG_FILE}"
         # REMOTE_PATH should always be absolute (resolved by /claude-sync:init)
         SSH_PORT="${SSH_PORT:-22}"
-        SSH_CMD=(ssh -p "$SSH_PORT")
-        RSYNC_SSH="ssh -p $SSH_PORT"
+        SSH_CONNECT_TIMEOUT="${SSH_CONNECT_TIMEOUT:-5}"
+        SSH_CMD=(ssh -o "ConnectTimeout=$SSH_CONNECT_TIMEOUT" -p "$SSH_PORT")
+        RSYNC_SSH="ssh -o ConnectTimeout=$SSH_CONNECT_TIMEOUT -p $SSH_PORT"
+    fi
+}
+
+# Quick TCP-level reachability check — fails fast (within SSH_CONNECT_TIMEOUT)
+# instead of letting rsync/ssh hang on the kernel TCP timeout (~2 minutes) when
+# the remote host is unreachable. Uses bash /dev/tcp to avoid SSH auth concerns.
+check_remote_reachable() {
+    [[ "$BACKEND" == "git" ]] && return 0
+    [[ -z "${REMOTE_HOST:-}" ]] && return 0
+    if ! timeout "$SSH_CONNECT_TIMEOUT" \
+            bash -c "</dev/tcp/$REMOTE_HOST/$SSH_PORT" 2>/dev/null; then
+        echo "error: remote $REMOTE_HOST:$SSH_PORT unreachable (timeout ${SSH_CONNECT_TIMEOUT}s)" >&2
+        echo "       check network connectivity or set SSH_CONNECT_TIMEOUT in config" >&2
+        return 1
     fi
 }
 
@@ -1472,14 +1487,14 @@ COMMAND="${1:-}"
 shift || true
 
 case "$COMMAND" in
-    sync)   load_config; cmd_sync "$@" ;;
-    status) load_config; cmd_status "$@" ;;
-    diff)   load_config; cmd_diff "$@" ;;
+    sync)   load_config; check_remote_reachable && cmd_sync "$@" ;;
+    status) load_config; check_remote_reachable && cmd_status "$@" ;;
+    diff)   load_config; check_remote_reachable && cmd_diff "$@" ;;
     update)  load_config; cmd_update "$@" ;;
     init)    cmd_init "$@" ;;
     fix)     cmd_launch_skill "fix" ;;
     learn)   cmd_launch_skill "learn" ;;
-    resolve) load_config; cmd_resolve "$@" ;;
+    resolve) load_config; check_remote_reachable && cmd_resolve "$@" ;;
     install-local) load_config; cmd_install_local "$@" ;;
     "")      usage; exit 1 ;;
     *)      echo "error: unknown command '$COMMAND'" >&2; exit 1 ;;
