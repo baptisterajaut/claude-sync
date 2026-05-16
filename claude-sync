@@ -91,6 +91,29 @@ load_config() {
     fi
 }
 
+# Warn loudly if jq is missing AND the user has plugin features configured.
+# Plugin filtering is jq-dependent — when jq is absent it silently no-ops,
+# which causes disabled plugins to leak into plugins.list, excluded plugins
+# to leak into remote settings.json, and key-ordering churn in settings.json
+# hashes to produce spurious conflicts.
+warn_if_jq_missing() {
+    command -v jq >/dev/null 2>&1 && return 0
+    local has_plugin_config=false
+    [[ -f "$CLAUDE_DIR/plugins/installed_plugins.json" ]] && has_plugin_config=true
+    [[ -f "$CONFIG_DIR/plugins.exclude" ]] && has_plugin_config=true
+    if [[ -f "$CLAUDE_DIR/settings.json" ]] && grep -q '"enabledPlugins"' "$CLAUDE_DIR/settings.json" 2>/dev/null; then
+        has_plugin_config=true
+    fi
+    [[ "$has_plugin_config" == "true" ]] || return 0
+    {
+        echo "warning: jq not found in PATH — plugin sync features are degraded:"
+        echo "  - disabled plugins may appear in plugins.list and propagate"
+        echo "  - plugins.exclude entries are not stripped from settings.json on push"
+        echo "  - settings.json may show spurious conflicts due to key-order differences"
+        echo "  install jq to enable full plugin sync behavior."
+    } >&2
+}
+
 # Quick TCP-level reachability check — fails fast (within SSH_CONNECT_TIMEOUT)
 # instead of letting rsync/ssh hang on the kernel TCP timeout (~2 minutes) when
 # the remote host is unreachable. Uses bash /dev/tcp to avoid SSH auth concerns.
@@ -1487,15 +1510,15 @@ COMMAND="${1:-}"
 shift || true
 
 case "$COMMAND" in
-    sync)   load_config; check_remote_reachable && cmd_sync "$@" ;;
-    status) load_config; check_remote_reachable && cmd_status "$@" ;;
-    diff)   load_config; check_remote_reachable && cmd_diff "$@" ;;
+    sync)   load_config; warn_if_jq_missing; check_remote_reachable && cmd_sync "$@" ;;
+    status) load_config; warn_if_jq_missing; check_remote_reachable && cmd_status "$@" ;;
+    diff)   load_config; warn_if_jq_missing; check_remote_reachable && cmd_diff "$@" ;;
     update)  load_config; cmd_update "$@" ;;
     init)    cmd_init "$@" ;;
     fix)     cmd_launch_skill "fix" ;;
     learn)   cmd_launch_skill "learn" ;;
-    resolve) load_config; check_remote_reachable && cmd_resolve "$@" ;;
-    install-local) load_config; cmd_install_local "$@" ;;
+    resolve) load_config; warn_if_jq_missing; check_remote_reachable && cmd_resolve "$@" ;;
+    install-local) load_config; warn_if_jq_missing; cmd_install_local "$@" ;;
     "")      usage; exit 1 ;;
     *)      echo "error: unknown command '$COMMAND'" >&2; exit 1 ;;
 esac
