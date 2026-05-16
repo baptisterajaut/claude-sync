@@ -146,9 +146,15 @@ MOCK
 }
 
 @test "install-local: fails without claude CLI" {
-    # Ensure claude is not in PATH
-    export PATH="/usr/bin:/bin"
-    run bash ./claude-sync install-local "my-plugin@marketplace"
+    # Build an isolated PATH with only the tools the script needs — and no claude.
+    # Can't rely on /usr/bin alone since claude may be installed there (e.g. Arch).
+    mkdir -p "$TEST_DIR/safebin"
+    for tool in bash sh mkdir grep cat echo printf rm sed awk find stat md5sum sort comm tr cut head tail wc env tee chmod readlink dirname basename mktemp date; do
+        if [ -x "/usr/bin/$tool" ]; then
+            ln -sf "/usr/bin/$tool" "$TEST_DIR/safebin/$tool"
+        fi
+    done
+    run env PATH="$TEST_DIR/safebin" bash ./claude-sync install-local "my-plugin@marketplace"
     [ "$status" -ne 0 ]
     [[ "$output" == *"claude CLI not found"* ]]
     # But exclude file should still have been written
