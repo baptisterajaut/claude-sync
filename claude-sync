@@ -117,11 +117,13 @@ warn_if_jq_missing() {
 # Quick TCP-level reachability check — fails fast (within SSH_CONNECT_TIMEOUT)
 # instead of letting rsync/ssh hang on the kernel TCP timeout (~2 minutes) when
 # the remote host is unreachable. Uses bash /dev/tcp to avoid SSH auth concerns.
+# REMOTE_HOST may carry a "user@" prefix; /dev/tcp only takes a bare host.
 check_remote_reachable() {
     [[ "$BACKEND" == "git" ]] && return 0
     [[ -z "${REMOTE_HOST:-}" ]] && return 0
+    local host="${REMOTE_HOST#*@}"
     if ! timeout "$SSH_CONNECT_TIMEOUT" \
-            bash -c "</dev/tcp/$REMOTE_HOST/$SSH_PORT" 2>/dev/null; then
+            bash -c "</dev/tcp/$host/$SSH_PORT" 2>/dev/null; then
         echo "error: remote $REMOTE_HOST:$SSH_PORT unreachable (timeout ${SSH_CONNECT_TIMEOUT}s)" >&2
         echo "       check network connectivity or set SSH_CONNECT_TIMEOUT in config" >&2
         return 1
